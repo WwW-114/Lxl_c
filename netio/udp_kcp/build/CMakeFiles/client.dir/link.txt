@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/client.dir/link.d CMakeFiles/client.dir/client.cpp.o -o client  libkcp.a

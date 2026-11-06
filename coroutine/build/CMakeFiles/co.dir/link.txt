@@ -1,0 +1,2 @@
+/usr/bin/ar qc libco.a CMakeFiles/co.dir/src/Fiber.cpp.o CMakeFiles/co.dir/src/Scheduler.cpp.o CMakeFiles/co.dir/src/Net.cpp.o
+/usr/bin/ranlib libco.a

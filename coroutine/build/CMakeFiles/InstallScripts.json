@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/mnt/hgfs/daimacheshi/cpp_internet_study/coroutine/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

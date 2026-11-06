@@ -1,0 +1,5 @@
+/mnt/hgfs/daimacheshi/cpp_internet_study/coroutine/build/CMakeFiles/co.dir
+/mnt/hgfs/daimacheshi/cpp_internet_study/coroutine/build/CMakeFiles/test_coroutine.dir
+/mnt/hgfs/daimacheshi/cpp_internet_study/coroutine/build/CMakeFiles/test.dir
+/mnt/hgfs/daimacheshi/cpp_internet_study/coroutine/build/CMakeFiles/edit_cache.dir
+/mnt/hgfs/daimacheshi/cpp_internet_study/coroutine/build/CMakeFiles/rebuild_cache.dir

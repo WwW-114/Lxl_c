@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>netio HTTP 服务器</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --fg: #1f2328;
+    --muted: #656d76;
+    --line: #d8dee4;
+    --accent: #0969da;
+    --ok: #1a7f37;
+    --err: #cf222e;
+    --code-bg: #f0f2f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --card: #161b22;
+      --fg: #e6edf3;
+      --muted: #8b949e;
+      --line: #30363d;
+      --accent: #4493f8;
+      --ok: #3fb950;
+      --err: #f85149;
+      --code-bg: #21262d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 16px;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+  }
+  h2 { font-size: 15px; margin: 0 0 12px; font-weight: 600; }
+  code {
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 13px;
+  }
+  pre {
+    background: var(--code-bg);
+    padding: 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 12px 0 0;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 13px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+  button {
+    font: inherit;
+    font-size: 14px;
+    padding: 5px 14px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--card);
+    color: var(--fg);
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button:active { transform: translateY(1px); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  td { padding: 5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td:first-child { width: 110px; color: var(--muted); }
+  .status-ok { color: var(--ok); }
+  .status-err { color: var(--err); }
+  ul { margin: 8px 0 0; padding-left: 20px; }
+  li { margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>netio HTTP 服务器</h1>
+  <p class="sub">这个页面本身，就是服务器用静态文件服务从这个目录里读出来发给你浏览器的。</p>
+
+  <div class="card">
+    <h2>连通性自检</h2>
+    <div class="row">
+      <button onclick="ping()">测试 /api/time</button>
+      <button onclick="info()">查询 /api/info</button>
+      <button onclick="echo()">POST /api/echo</button>
+    </div>
+    <pre id="out">点上面的按钮试试。响应会原样显示在这里。</pre>
+  </div>
+
+  <div class="card">
+    <h2>当前连接</h2>
+    <table>
+      <tr><td>页面来源</td><td><code id="origin"></code></td></tr>
+      <tr><td>HTTP 协议</td><td>看浏览器的开发者工具 → Network → Headers</td></tr>
+      <tr><td>连接复用</td><td>上面几个按钮连点几次，Network 面板里应当只有<b>一条</b>连接（<code>Connection: keep-alive</code>）</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>可用的接口</h2>
+    <ul>
+      <li><code>GET /hello</code> —— 最小动态响应，证明页面是代码现算出来的</li>
+      <li><code>GET /api/time</code> —— 当前 UTC 时间（JSON）</li>
+      <li><code>POST /api/echo</code> —— 回显请求正文，用来验证 Content-Length 解析是否正确</li>
+      <li><code>GET /api/info</code> —— 服务器状态：实际生效的多路复用后端、当前连接数</li>
+      <li><code>GET /api/big?size=N</code> —— 生成 N 字节数据，用来压测大响应的发送缓冲区</li>
+    </ul>
+    <p class="sub" style="margin:12px 0 0">
+      浏览器地址栏直接访问 <code>/hello</code> 或 <code>/api/time</code> 也能看到结果。
+      想看协议细节，用 <code>curl -v</code>。
+    </p>
+  </div>
+</main>
+
+<script>
+const out = document.getElementById('out');
+document.getElementById('origin').textContent = location.origin;
+
+function show(title, text, ok) {
+  out.className = ok === false ? 'status-err' : (ok ? 'status-ok' : '');
+  out.textContent = title + '\n' + text;
+}
+
+async function ping() {
+  try {
+    const r = await fetch('/api/time');
+    show('GET /api/time  →  ' + r.status + ' ' + r.statusText,
+         await r.text() + '\n\nConnection: ' + r.headers.get('connection') +
+         '\nContent-Length: ' + r.headers.get('content-length') +
+         '\nDate: ' + r.headers.get('date'), true);
+  } catch (e) {
+    show('请求失败', String(e), false);
+  }
+}
+
+async function info() {
+  try {
+    const r = await fetch('/api/info');
+    show('GET /api/info  →  ' + r.status + ' ' + r.statusText, await r.text(), true);
+  } catch (e) {
+    show('请求失败', String(e), false);
+  }
+}
+
+async function echo() {
+  const payload = '来自浏览器的 ' + new Date().toISOString() + ' 问候';
+  try {
+    const r = await fetch('/api/echo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      body: payload,
+    });
+    show('POST /api/echo  →  ' + r.status + ' ' + r.statusText, await r.text(), true);
+  } catch (e) {
+    show('请求失败', String(e), false);
+  }
+}
+</script>
+</body>
+</html>

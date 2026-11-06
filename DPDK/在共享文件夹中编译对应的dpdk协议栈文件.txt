@@ -1,0 +1,80 @@
+DPDK 用户协议栈（Ustack）编译说明
+=================================
+
+环境：VMware 虚拟机
+源码路径：/mnt/hgfs/daimacheshi/cpp_internet_study/DPDK/Ustack（共享文件夹 hgfs）
+目标：用自己的 DPDK 协议栈代码 ustack.c，按 DPDK 官方示例的方式编译
+
+
+一、Makefile 来源
+-----------------
+
+从 DPDK 源码目录中的示例程序 helloworld 复制 Makefile，路径为：
+
+    <DPDK源码根目录>/examples/helloworld/Makefile
+
+该 Makefile 采用 pkg-config 方式获取 DPDK 的编译与链接参数，
+是新版 DPDK 示例程序的标准独立构建脚本。
+
+
+二、复制后所做的修改
+--------------------
+
+【修改 1】修改生成的可执行程序名
+原内容：
+    APP = helloworld
+修改为：
+    APP = ustack
+
+【修改 2】修改参与编译的源文件名
+原内容：
+    SRCS-y := main.c
+修改为：
+    SRCS-y := ustack.c
+
+说明：源文件名必须与实际文件 ustack.c 完全一致。
+（此前曾误写为 usatck.c，导致 make 报"没有规则可制作目标 usatck.c"。）
+
+【修改 3】将软链接改为文件复制，以适配共享文件夹
+原内容：
+    shared: build/$(APP)-shared
+        ln -sf $(APP)-shared build/$(APP)
+    static: build/$(APP)-static
+        ln -sf $(APP)-static build/$(APP)
+修改为：
+    shared: build/$(APP)-shared
+        cp build/$(APP)-shared build/$(APP)
+    static: build/$(APP)-static
+        cp build/$(APP)-static build/$(APP)
+
+说明：
+原 Makefile 用 ln -sf 创建软链接 build/ustack -> ustack-shared。
+但共享文件夹 hgfs 默认不支持创建符号链接，执行时报：
+    ln: Operation not supported
+    make: *** [Makefile:20：shared] 错误 1
+改为 cp 复制可执行文件，不依赖符号链接，即可在共享文件夹内正常构建。
+（clean 目标中原有的 rm -f build/$(APP) 已能清理该文件，无需额外修改。）
+
+
+三、编译步骤
+------------
+
+1. 确认已安装 DPDK 且 pkg-config 能找到 libdpdk：
+       pkg-config --exists libdpdk && echo ok
+2. 进入源码目录：
+       cd /mnt/hgfs/daimacheshi/cpp_internet_study/DPDK/Ustack
+3. 执行编译：
+       make
+4. 生成结果：
+       build/ustack-shared   编译出的可执行文件
+       build/ustack          由 cp 复制得到的可执行文件副本
+5.运行：
+	sudo ./build/ustack --iova-mode=pa （sudo是为了转成root用户权限来读取网卡的物理地址，而--iova-mode=pa是网卡必须在pa模式上才能初始化）
+
+四、附：共享文件夹的时间戳警告
+------------------------------
+
+编译时可能出现：
+    make: 警告：文件"Makefile"的修改时间在未来 0.65 秒后
+这是 hgfs 时间戳/时钟同步问题，不影响编译结果，可忽略；
+如需消除，可在编译前执行 touch Makefile 刷新时间戳。
