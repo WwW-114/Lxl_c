@@ -269,7 +269,6 @@ static void handle_recv(struct io_uring_cqe *cqe) {
    */
   fprintf(stdout, "recv %d bytes: ", n);
   fwrite(conns[fd].buff, 1, (size_t)n, stdout);
-  fputc('\n', stdout);
   fflush(stdout);
 
   /* 记录要回显的数据长度，然后提交 send */
