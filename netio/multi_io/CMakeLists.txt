@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ccp_internet_study_netio LANGUAGES CXX)
+project(cpp_internet_study_netio LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

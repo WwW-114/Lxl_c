@@ -70,7 +70,15 @@ public:
         size_t maxBodyBytes = 1 * 1024 * 1024;     // 请求正文
     };
 
-    explicit HttpContext(Limits limits = {}) : limits_(limits) {}
+    // 【为什么拆成两个构造函数】
+    // 原本写成 explicit HttpContext(Limits limits = {}) 更自然，但 GCC 11~15
+    // 都有一个缺陷：嵌套结构体 Limits 的默认成员初始化器要等外层类解析完
+    // 才真正生效，而成员函数的默认实参在那之前就要做类型检查，于是 {} 会被
+    // 判定为「无法转换成 Limits」（could not convert '<brace-enclosed
+    // initializer list>()'）。把默认构造拆出来、委托给带参版本即可绕开这个
+    // 时机问题，两种写法的语义完全一致。
+    HttpContext() : HttpContext(Limits()) {}
+    explicit HttpContext(Limits limits) : limits_(limits) {}
 
     HttpContext(const HttpContext&) = delete;
     HttpContext& operator=(const HttpContext&) = delete;

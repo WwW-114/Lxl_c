@@ -43,7 +43,10 @@ public:
         size_t readChunk = 4096;     // 单次 recv 的缓冲区大小
     };
 
-    explicit TcpServer(Options opts = {});
+    // 拆成两个构造函数的原因见 HttpContext 里的说明：GCC 对「嵌套结构体 +
+    // 默认成员初始化器 + 默认实参 = {}」的处理有缺陷。语义与原写法一致。
+    TcpServer() : TcpServer(Options()) {}
+    explicit TcpServer(Options opts);
     ~TcpServer();
 
     TcpServer(const TcpServer&) = delete;

@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/echo_client.dir/link.d CMakeFiles/echo_client.dir/examples/echo_client.cpp.o -o echo_client  libnetio.a

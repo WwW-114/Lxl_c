@@ -60,7 +60,10 @@ public:
         int idleTimeoutMs = 60 * 1000;
     };
 
-    explicit HttpServer(Options opts = {});
+    // 同 TcpServer：默认构造委托给带参版本，避开 GCC 对「嵌套结构体 +
+    // 默认成员初始化器 + 默认实参 = {}」的缺陷。语义与原写法一致。
+    HttpServer() : HttpServer(Options()) {}
+    explicit HttpServer(Options opts);
     ~HttpServer() = default;
 
     HttpServer(const HttpServer&) = delete;
