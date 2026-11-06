@@ -8,8 +8,9 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 
-#define TEST_MESSAGE "Payload=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\r\n\0"
-#define RBUFFER_SIZE 128
+#define TEST_MESSAGE "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789qwertyuioplkjhgfdsazxcvbnm\r\n"
+#define RBUFFER_SIZE 2048
+#define WBUFFER_SIZE 2048
 #define TIME_SUB_MS(tv1, tv2) ((tv1.tv_sec - tv2.tv_sec) * 1000 + (tv1.tv_usec - tv2.tv_usec) / 1000)
 
 struct test_context_s {
@@ -45,7 +46,13 @@ int connect_tcpserver(const char *ip, unsigned short port) {
 }
 
 int send_recv_tcppkt(int fd) {
-  int res = send(fd, TEST_MESSAGE, sizeof(TEST_MESSAGE), 0);
+  char wbuffer[WBUFFER_SIZE] = {0};
+
+  for(int i = 0; i < 30; ++i) {
+    strcpy(wbuffer + i * strlen(TEST_MESSAGE), TEST_MESSAGE);
+  } 
+  
+  int res = send(fd, wbuffer, strlen(wbuffer), 0);
   if(res < 0) {
     exit(1);
   }
@@ -56,8 +63,8 @@ int send_recv_tcppkt(int fd) {
     exit(1);
   }
   
-  if(strcmp(rbuffer, TEST_MESSAGE) != 0) {
-    printf("failed = '%s' != '%s'\n", rbuffer, TEST_MESSAGE);
+  if(strcmp(rbuffer, wbuffer) != 0) {
+    printf("failed = '%s' != '%s'\n", rbuffer, wbuffer);
     return -1;
   }
 
@@ -94,6 +101,7 @@ int main(int argc, char **argv) {
   int opt;
 
   test_context_t ctx;
+  memset(&ctx, 0, sizeof(ctx));
   
   while((opt = getopt(argc, argv, "s:p:t:c:n:?")) != -1) {
     switch (opt) {
