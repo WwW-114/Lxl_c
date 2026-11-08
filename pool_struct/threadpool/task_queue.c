@@ -222,7 +222,10 @@ int task_queue_pop(task_queue_t *q, void **out) {
 
   pthread_cond_signal(&q->not_full);
   pthread_mutex_unlock(&q->mutex);
-  
+
+  *out = node->data;
+  free(node);
+    
   return TQ_OK;
 }
 
@@ -254,6 +257,9 @@ int task_queue_try_pop(task_queue_t *q, void **out) {
 
   pthread_cond_signal(&q->not_full);
   pthread_mutex_unlock(&q->mutex);
+
+  *out = node->data;
+  free(node);
   
   return TQ_OK;
 }
