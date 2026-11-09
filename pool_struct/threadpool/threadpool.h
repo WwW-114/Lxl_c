@@ -24,7 +24,7 @@ unsigned long threadpool_pending (threadpool_t *thrd_pool);
 
 unsigned long threadpool_completed (threadpool_t *thrd_pool);
 
-unsigned long threadpool_queueud (threadpool_t *thrd_pool);  
+unsigned long threadpool_queued (threadpool_t *thrd_pool);  
 
 #ifdef __cplusplus
 }

@@ -199,7 +199,7 @@ unsigned long threadpool_completed(threadpool_t *thrd_pool) {
   return completed;
 }
 
-size_t threadpool_queueud(threadpool_t *thrd_pool) {
+size_t threadpool_queued(threadpool_t *thrd_pool) {
   return thrd_pool == NULL ? 0 : task_queue_size(thrd_pool->queue);
 }
 
