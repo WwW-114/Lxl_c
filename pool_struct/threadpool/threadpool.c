@@ -3,6 +3,7 @@
 
 #include <pthread.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 typedef struct {
   task_fn_t func;
@@ -73,18 +74,20 @@ threadpool_t* threadpool_create (int thread_num, int queue_num) {
     queue_num = 64;
   }
 
-  threadpool_t *thrd_pool = (threadpool_t*)calloc(1, sizeof(threadpool_t));
+  threadpool_t *thrd_pool = (threadpool_t*)calloc((size_t)thread_num, sizeof(threadpool_t));
   if(thrd_pool != NULL) {
+    thrd_pool->thread_num = thread_num;
+    
     thrd_pool->thread = (pthread_t*)calloc((size_t)thread_num, sizeof(pthread_t));
     if(thrd_pool->thread != NULL) {
       thrd_pool->queue = task_queue_create((size_t)queue_num, task_release);
       if(thrd_pool->queue != NULL) {
-        if(pthread_mutex_init(&thrd_pool->mutex, NULL) != 0) {
-          if(pthread_cond_init(&thrd_pool->all_idle, NULL) != 0) {
+        if(pthread_mutex_init(&thrd_pool->mutex, NULL) == 0) {
+          if(pthread_cond_init(&thrd_pool->all_idle, NULL) == 0) {
             int i = 0;
-
+      
             for(; i < thread_num; ++i) {
-              if(pthread_create(&thrd_pool->thread[i], NULL, work_main, thrd_pool) != 0) {
+              if(pthread_create(&thrd_pool->thread[i], NULL, work_main, thrd_pool) == 0) {
                 if(i == thread_num - 1) {
                   return thrd_pool;
                 }
@@ -95,7 +98,7 @@ threadpool_t* threadpool_create (int thread_num, int queue_num) {
             }
 
             for(int j = 0; j < i; ++j) {
-              pthread_join(thrd_pool->thread[i], NULL);
+              pthread_join(thrd_pool->thread[j], NULL);
             }
             
             pthread_cond_destroy(&thrd_pool->all_idle);
@@ -104,7 +107,7 @@ threadpool_t* threadpool_create (int thread_num, int queue_num) {
           pthread_mutex_destroy(&thrd_pool->mutex);
         }
         
-        free(thrd_pool->queue);
+        task_queue_destroy(thrd_pool->queue);
       }
           
       free(thrd_pool->thread);

@@ -77,10 +77,10 @@ void task_queue_destroy(task_queue_t *q) {
 
   free_node_list(q, node);
 
-  pthread_mutex_destroy(&q->mutex);
   pthread_cond_destroy(&q->not_empty);
   pthread_cond_destroy(&q->not_full);
-
+  pthread_mutex_destroy(&q->mutex);
+  
   free(q);
 }
 
@@ -108,7 +108,7 @@ void task_queue_close(task_queue_t *q, int graceful) {
 
   pthread_cond_broadcast(&q->not_empty);
   pthread_cond_broadcast(&q->not_full);
-  pthread_mutex_destroy(&q->mutex);
+  pthread_mutex_unlock(&q->mutex);
 
   free_node_list(q, discard);
 }
@@ -237,14 +237,10 @@ int task_queue_try_pop(task_queue_t *q, void **out) {
 
   pthread_mutex_lock(&q->mutex);
 
-  if(q->closed) {
-    pthread_mutex_unlock(&q->mutex);
-    return TQ_CLOSED;
-  }
-
   if(q->size == 0) {
+    int status = q->closed ? TQ_CLOSED : TQ_EMPTY;
     pthread_mutex_unlock(&q->mutex);
-    return TQ_EMPTY;
+    return status;
   }
 
   queue_node_t *node = q->head;
@@ -282,7 +278,7 @@ size_t task_queue_size(task_queue_t *q) {
   }
 
   pthread_mutex_lock(&q->mutex);
-  int size = q->size;
+  size_t size = q->size;
   pthread_mutex_unlock(&q->mutex);
 
   return size;

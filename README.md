@@ -3,12 +3,16 @@
 记录在 **Linux** 系统上学习 **C/C++ 网络编程** 的过程。主线是：从裸 socket 出发，
 经过 IO 多路复用（epoll），再到应用层协议（HTTP）、可靠 UDP（KCP）、协程化网络 I/O，
 以及基于 **io_uring** 的完成式异步 I/O。
-除保留的第三方 `NtyCo-master`、`DPDK/Ustack` 使用 Makefile，以及 `netio/io_uring`
-使用 gcc + 自带的 liburing 源码外，其余子项目统一使用 **CMake** 构建。
+除保留的第三方 `NtyCo-master`、`DPDK/Ustack` 使用 Makefile，`netio/io_uring`
+使用 gcc + 自带的 liburing 源码，以及 `test/` 使用 gcc + pthread 外，其余子项目
+统一使用 **CMake** 构建。
 
 此外还有一个 **DPDK 用户态协议栈**分支（`DPDK/Ustack`）：用 DPDK 接管虚拟网卡，
 在用户态轮询收包、解析 Ethernet/IPv4/UDP/TCP/ICMP 并回显给发送端，同时实现 ARP
 应答器和 ICMP Echo Reply（支持 ping），使用 Makefile + pkg-config 构建。
+
+此外，`pool_struct/` 是池化结构与并发模式的学习分支（当前包含线程池），
+与网络主线相对独立。
 
 ---
 
@@ -24,6 +28,9 @@ cpp_internet_study/
 │   └── io_uring/                 [C]     基于 liburing 的 TCP Echo Server（SQ/CQ 完成通知）
 ├── coroutine/                    [C++17 / C] 基于 ucontext + epoll 的协程网络 I/O 框架
 │   └── NtyCo-master/             [C]     第三方 NtyCo 源码快照（参考实现，Makefile 构建）
+├── test/                         [C]     TCP 回显服务器 QPS 压测客户端（多线程 / 多连接 / pipeline）
+├── pool_struct/                  池化结构（非网络主线）
+│   └── threadpool/               [C11] 队列与线程池分离的有界阻塞线程池（CMake）
 └── DPDK/                         DPDK 用户态协议栈
     └── Ustack/                   [C]     轮询 vmxnet3，解析 IPv4 + UDP/TCP，Makefile 构建
 ```
@@ -39,8 +46,10 @@ cpp_internet_study/
 | [`netio/tcp_p2p`](netio/tcp_p2p/) | C11 | Linux | CMake | 用 C 写的 epoll reactor，上面做一个**对等**的 TCP 通信程序，两端都能监听也能连接 |
 | [`netio/udp_kcp`](netio/udp_kcp/) | C++17 | Linux | CMake | 基于 skywind3000 的 KCP 实现的文字聊天室：昵称登录、群聊广播、心跳断线检测 |
 | [`netio/io_uring`](netio/io_uring/) | C | Linux（内核 ≥ 5.6） | gcc + 仓库内 liburing | 用 liburing 的 accept/recv/send 实现 TCP 回显；单次 shot 模型，演示 SQE/CQE、`user_data` 编码、短写与缓冲区生命周期 |
+| [`test`](test/) | C | Linux | gcc + pthread | 面向 `io_uring/echo_server` 的 QPS 压测客户端：v1 一线程一连接同步发收；v2 多线程 × 多连接 × pipeline、应用层分帧，统计 QPS / RTT / 吞吐并验证拆包与粘包 |
 | [`coroutine`](coroutine/) | C++17 | Linux | CMake | 用 ucontext 保存协程栈、epoll 唤醒协程，把同步写法跑在非阻塞 socket 上 |
 | [`coroutine/NtyCo-master`](coroutine/NtyCo-master/) | C | Linux | Makefile | 第三方 NtyCo 源码快照：ucontext 协程 + epoll + dlsym hook，附 echo / HTTP / WebSocket / MySQL / Redis / 压测示例，作为自写框架的参考实现 |
+| [`pool_struct/threadpool`](pool_struct/threadpool/) | C11 | Linux | CMake | 队列与线程池分离的有界阻塞线程池：mutex + 条件变量、背压、优雅/立即关闭、pending 统计 |
 | [`DPDK/Ustack`](DPDK/Ustack/) | C | Linux（VMware 虚拟机） | Makefile | DPDK 24.11.7 接管 vmxnet3，轮询收包，解析 Ethernet/IPv4/UDP/TCP/ICMP，打印 payload 并回显；实现 ARP 应答器和 ICMP Echo Reply（ping）；含大页、vfio、VMnet、ARP 动态解析的完整排错记录 |
 
 > `coroutine/` 目录还保留了 `setjmp/longjmp` 与 `ucontext` 的最小实验，作为理解协程切换的前置材料，详见它自己的 README。
@@ -67,6 +76,31 @@ cpp_internet_study/
 `Mymulti_io` 不占主线，它是第 1、2 层学完之后的**自测**：
 
 > 合上 `multi_io` 的代码，从零写一遍。写不出来的地方，就是没真懂的地方。
+
+---
+
+## 压测验证（`test/`）
+
+`test/` 不占学习主线，用来验证 `netio/io_uring/echo_server` 的回显性能，
+也可以压任何“收到多少回显多少”的 TCP 服务：
+
+| 文件 | 说明 |
+|------|------|
+| `test_qps_tcpclient.c` | v1 简单版：每个线程一条连接，同步 `send` 一包、`recv` 一包，`strcmp` 校验；只能做冒烟测试 |
+| `test_qps_tcpclient_v2.c` | v2 完整版：多线程 × 多连接 × pipeline，12 字节帧头（magic/seq/len）+ 逐字节 payload 校验，处理短写、半包、`EAGAIN`、连接失败，统计 QPS / RTT / 吞吐 / 拆包次数 / 粘包批数 |
+
+```bash
+# 终端 1：服务端 stdout 必须重定向，否则测到的是终端 I/O 速度
+cd netio/io_uring && ./echo_server > /dev/null
+
+# 终端 2：编译并压测
+cd test
+gcc -O2 -Wall -Wextra -D_GNU_SOURCE -pthread \
+    test_qps_tcpclient_v2.c -o test_qps_tcpclient_v2
+./test_qps_tcpclient_v2 -s 127.0.0.1 -p 9999 -t 4 -c 64 -n 200000 -b 1920 -P 4
+```
+
+细节、参数、指标解释和拆包/粘包复现方法见 [`test/README.md`](test/README.md)。
 
 ---
 
@@ -175,8 +209,8 @@ ping -c 4 10.10.10.100
 
 ## 构建方式
 
-除 `NtyCo-master`、`DPDK/Ustack` 和 `netio/io_uring` 外，其余子项目使用 **CMake**
-构建（`Mymulti_io` 暂未提供 `CMakeLists.txt`），**在各自的子目录里**执行：
+除 `NtyCo-master`、`DPDK/Ustack`、`netio/io_uring` 和 `test/` 外，其余子项目使用
+**CMake** 构建（`Mymulti_io` 暂未提供 `CMakeLists.txt`），**在各自的子目录里**执行：
 
 ```bash
 cd netio/<项目名>
@@ -213,8 +247,8 @@ make
 sudo ./build/ustack --iova-mode=pa
 ```
 
-> `Mymulti_io` 和 `netio/io_uring` 没有 `CMakeLists.txt`：前者是手写练习，
-> 后者使用 gcc + liburing 直接构建。
+> `Mymulti_io`、`netio/io_uring` 和 `test/` 没有 `CMakeLists.txt`：`Mymulti_io` 是手写练习，
+> `netio/io_uring` 使用 gcc + liburing 直接构建，`test/` 使用 gcc + pthread 直接构建。
 
 `netio/io_uring` 使用 gcc，并先把仓库内的 liburing 源码构建成静态库：
 
@@ -230,6 +264,25 @@ gcc -O2 -Wall -Wextra -D_GNU_SOURCE \
 
 需要 Linux 内核 ≥ 5.6；Windows / MSVC 无法编译。
 
+`test/` 的两个压测客户端是单文件程序，用 gcc + pthread 编译：
+
+```bash
+cd test
+
+# v2：多线程 / 多连接 / pipeline 压测（推荐）
+gcc -O2 -Wall -Wextra -D_GNU_SOURCE -pthread \
+    test_qps_tcpclient_v2.c -o test_qps_tcpclient_v2
+
+# v1：简单同步版
+gcc -O2 -Wall -Wextra -pthread \
+    test_qps_tcpclient.c -o test_qps_tcpclient
+
+# 运行（服务端需要先启动且 stdout 重定向）
+./test_qps_tcpclient_v2 -s 127.0.0.1 -p 9999 -t 4 -c 64 -n 200000 -b 1920 -P 4
+```
+
+参数、指标含义与拆包/粘包复现方法见 [`test/README.md`](test/README.md)。
+
 ### 跨平台说明
 
 | 项目 | Linux | Windows |
@@ -239,6 +292,7 @@ gcc -O2 -Wall -Wextra -D_GNU_SOURCE \
 | `tcp_p2p` | ✅ | ❌（直接依赖 `<sys/epoll.h>`） |
 | `udp_kcp` | ✅ | ❌（POSIX socket；CMake 里有 `if(NOT UNIX)` 硬拦截） |
 | `netio/io_uring` | ✅ | ❌（io_uring 是 Linux 内核接口） |
+| `test` | ✅ | ❌（POSIX socket + pthread + poll） |
 | `coroutine` | ✅ | ❌（`ucontext` + `epoll`，需走 WSL / Linux 机器） |
 | `coroutine/NtyCo-master` | ✅ | ❌（`ucontext` + `epoll` + `dlsym`，仅 Linux） |
 | `DPDK/Ustack` | ✅（仅 VMware Ubuntu 虚拟机） | ❌（需要 vfio、大页和 Linux DPDK 环境） |
@@ -287,15 +341,17 @@ ip neigh show 10.10.10.100
 |----|------|
 | 系统 | Linux（`multi_io` 额外支持 Windows + MSVC；`coroutine` 依赖 glibc 的 `ucontext` 与 `epoll`；`netio/io_uring` 需要内核 ≥ 5.6） |
 | 编译器 | GCC / Clang，C++17 与 C11 |
-| 构建 | CMake ≥ 3.13（`tcp_p2p` 要求 ≥ 3.10）；`NtyCo-master` 与 `DPDK/Ustack` 使用 Make；`netio/io_uring` 使用 gcc + 仓库内 liburing |
-| 依赖 | 主线项目无第三方库。`udp_kcp` 自带的 `ikcp.c/h` 是 vendored 源码，不通过包管理器获取；`netio/io_uring` 的 `liburing-master`（v2.15）是随仓库提供的源码；`NtyCo-master` 的 WebSocket / MySQL / Redis 示例额外依赖 OpenSSL、libmysqlclient、hiredis |
+| 构建 | CMake ≥ 3.13（`tcp_p2p` 要求 ≥ 3.10）；`NtyCo-master` 与 `DPDK/Ustack` 使用 Make；`netio/io_uring` 使用 gcc + 仓库内 liburing；`test/` 使用 gcc + pthread |
+| 依赖 | 主线项目无第三方库。`udp_kcp` 自带的 `ikcp.c/h` 是 vendored 源码，不通过包管理器获取；`netio/io_uring` 的 `liburing-master`（v2.15）是随仓库提供的源码；`NtyCo-master` 的 WebSocket / MySQL / Redis 示例额外依赖 OpenSSL、libmysqlclient、hiredis；`test/` 只依赖 glibc 的 pthread/poll |
 | io_uring | Linux 内核 ≥ 5.6；构建前在 `netio/io_uring/liburing-master` 执行 `./configure && make -C src` |
 | DPDK | DPDK 24.11.7（`pkg-config libdpdk`），VMware 虚拟机，`vmxnet3` 网卡，vfio-pci + no-IOMMU + 大页 |
 
 > **测试环境说明**：当前开发机是 **Windows**，没有安装 WSL，也没有本地 Linux 工具链。
-> 源码在本机编写；`coroutine`、`tcp_p2p`、`udp_kcp`、`netio/io_uring` 等依赖 Linux
-> 系统调用的项目，统一在 **虚拟机中的 Linux** 上编译、运行和测试。
+> 源码在本机编写；`coroutine`、`tcp_p2p`、`udp_kcp`、`netio/io_uring`、`test` 等依赖
+> Linux 系统调用的项目，统一在 **虚拟机中的 Linux** 上编译、运行和测试。
 > `netio/io_uring` 还要求虚拟机内核 ≥ 5.6 且未通过 seccomp 禁用 io_uring。
+> `test/` 的压测客户端同样在虚拟机中运行，并建议把服务端 stdout 重定向到
+> `/dev/null` 后再测 QPS。
 > `DPDK/Ustack` 还需要在虚拟机中完成大页分配、vfio 绑定和 VMnet 配置。
 
 ---
@@ -305,7 +361,8 @@ ip neigh show 10.10.10.100
 - **注释语言**：中文。解释「为什么这么做」而不只是「做了什么」。
 - **构建产物**：CMake 项目一律生成在各自的 `build/` 子目录；`NtyCo-master` 保留原 Makefile 的
   `objs/`、`bin/` 布局（已在其 `.gitignore` 中忽略）；`DPDK/Ustack` 使用 `build/`；
-  `netio/io_uring` 直接在目录下生成 `echo_server`，liburing 产物在 `liburing-master/src/`。
+  `netio/io_uring` 直接在目录下生成 `echo_server`，liburing 产物在 `liburing-master/src/`；
+  `test/` 的可执行文件直接生成在 `test/` 目录下。
 - **平台相关代码**：用 `if(UNIX)` / `if(WIN32)` 在 CMake 里隔离，或在源码里用 `#ifdef` 包住。
 - **不引入外部依赖**：学习项目优先自己实现，能用标准库就不用第三方库。
   例外是 `netio/io_uring/liburing-master`（随仓库提供的 liburing 源码）和
