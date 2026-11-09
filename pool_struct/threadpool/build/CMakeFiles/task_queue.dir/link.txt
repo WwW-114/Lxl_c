@@ -1,0 +1,2 @@
+/usr/bin/ar qc libtask_queue.a CMakeFiles/task_queue.dir/task_queue.c.o
+/usr/bin/ranlib libtask_queue.a

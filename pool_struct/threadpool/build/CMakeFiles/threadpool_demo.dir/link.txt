@@ -1,0 +1,1 @@
+/usr/bin/cc -Wl,--dependency-file=CMakeFiles/threadpool_demo.dir/link.d CMakeFiles/threadpool_demo.dir/main.c.o -o threadpool_demo  libthreadpool.a libtask_queue.a
