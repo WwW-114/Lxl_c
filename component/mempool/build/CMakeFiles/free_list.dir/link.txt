@@ -1,0 +1,2 @@
+/usr/bin/ar qc libfree_list.a CMakeFiles/free_list.dir/free_list.c.o
+/usr/bin/ranlib libfree_list.a

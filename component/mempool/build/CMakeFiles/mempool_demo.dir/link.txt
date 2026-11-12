@@ -1,0 +1,1 @@
+/usr/bin/cc -Wl,--dependency-file=CMakeFiles/mempool_demo.dir/link.d CMakeFiles/mempool_demo.dir/main.c.o -o mempool_demo  libmempool.a libfree_list.a

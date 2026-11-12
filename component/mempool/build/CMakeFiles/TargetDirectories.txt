@@ -1,0 +1,6 @@
+/mnt/hgfs/daimacheshi/cpp_internet_study/component/mempool/build/CMakeFiles/free_list.dir
+/mnt/hgfs/daimacheshi/cpp_internet_study/component/mempool/build/CMakeFiles/mempool.dir
+/mnt/hgfs/daimacheshi/cpp_internet_study/component/mempool/build/CMakeFiles/mempool_demo.dir
+/mnt/hgfs/daimacheshi/cpp_internet_study/component/mempool/build/CMakeFiles/test.dir
+/mnt/hgfs/daimacheshi/cpp_internet_study/component/mempool/build/CMakeFiles/edit_cache.dir
+/mnt/hgfs/daimacheshi/cpp_internet_study/component/mempool/build/CMakeFiles/rebuild_cache.dir

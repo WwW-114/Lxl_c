@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/mnt/hgfs/daimacheshi/cpp_internet_study/component/mempool/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

@@ -1,0 +1,2 @@
+/usr/bin/ar qc libmempool.a CMakeFiles/mempool.dir/mempool.c.o
+/usr/bin/ranlib libmempool.a

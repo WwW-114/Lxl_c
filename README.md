@@ -11,7 +11,7 @@
 在用户态轮询收包、解析 Ethernet/IPv4/UDP/TCP/ICMP 并回显给发送端，同时实现 ARP
 应答器和 ICMP Echo Reply（支持 ping），使用 Makefile + pkg-config 构建。
 
-此外，`pool_struct/` 是池化结构与并发模式的学习分支（当前包含线程池），
+此外，`component/` 是池化结构与并发组件的学习分支，当前包含线程池和内存池，
 与网络主线相对独立。
 
 ---
@@ -29,8 +29,9 @@ cpp_internet_study/
 ├── coroutine/                    [C++17 / C] 基于 ucontext + epoll 的协程网络 I/O 框架
 │   └── NtyCo-master/             [C]     第三方 NtyCo 源码快照（参考实现，Makefile 构建）
 ├── test/                         [C]     TCP 回显服务器 QPS 压测客户端（多线程 / 多连接 / pipeline）
-├── pool_struct/                  池化结构（非网络主线）
-│   └── threadpool/               [C11] 队列与线程池分离的有界阻塞线程池（CMake）
+├── component/                    池化结构与并发组件（非网络主线）
+│   ├── threadpool/               [C11] 队列与线程池分离的有界阻塞线程池（CMake）
+│   └── mempool/                  [C11] 固定大小块内存池：侵入式空闲链表 + chunk 扩容（CMake）
 └── DPDK/                         DPDK 用户态协议栈
     └── Ustack/                   [C]     轮询 vmxnet3，解析 IPv4 + UDP/TCP，Makefile 构建
 ```
@@ -49,7 +50,8 @@ cpp_internet_study/
 | [`test`](test/) | C | Linux | gcc + pthread | 面向 `io_uring/echo_server` 的 QPS 压测客户端：v1 一线程一连接同步发收；v2 多线程 × 多连接 × pipeline、应用层分帧，统计 QPS / RTT / 吞吐并验证拆包与粘包 |
 | [`coroutine`](coroutine/) | C++17 | Linux | CMake | 用 ucontext 保存协程栈、epoll 唤醒协程，把同步写法跑在非阻塞 socket 上 |
 | [`coroutine/NtyCo-master`](coroutine/NtyCo-master/) | C | Linux | Makefile | 第三方 NtyCo 源码快照：ucontext 协程 + epoll + dlsym hook，附 echo / HTTP / WebSocket / MySQL / Redis / 压测示例，作为自写框架的参考实现 |
-| [`pool_struct/threadpool`](pool_struct/threadpool/) | C11 | Linux | CMake | 队列与线程池分离的有界阻塞线程池：mutex + 条件变量、背压、优雅/立即关闭、pending 统计 |
+| [`component/threadpool`](component/threadpool/) | C11 | Linux | CMake | 队列与线程池分离的有界阻塞线程池：mutex + 条件变量、背压、优雅/立即关闭、pending 统计 |
+| [`component/mempool`](component/mempool/) | C11 | Windows / Linux | CMake | 固定大小块内存池：侵入式空闲链表、chunk 批量申请、对齐、扩容上限、统计；基础版单线程 |
 | [`DPDK/Ustack`](DPDK/Ustack/) | C | Linux（VMware 虚拟机） | Makefile | DPDK 24.11.7 接管 vmxnet3，轮询收包，解析 Ethernet/IPv4/UDP/TCP/ICMP，打印 payload 并回显；实现 ARP 应答器和 ICMP Echo Reply（ping）；含大页、vfio、VMnet、ARP 动态解析的完整排错记录 |
 
 > `coroutine/` 目录还保留了 `setjmp/longjmp` 与 `ucontext` 的最小实验，作为理解协程切换的前置材料，详见它自己的 README。
@@ -57,6 +59,17 @@ cpp_internet_study/
 > `coroutine/` 下有两套实现：主线是自己用 C++17 写的框架（显式 `co::` API、每协程独立栈）；
 > `NtyCo-master/` 是原样保留的第三方 C 参考实现（`dlsym` hook libc、调度器共享栈、红黑树定时器）。
 > 两者解决同一个问题，取舍不同，详见各自的 README。
+
+### 池化组件（`component/`）
+
+`component/` 与网络主线相对独立，关注资源复用与并发调度：
+
+- [`component/threadpool`](component/threadpool/)：有界阻塞队列 + 固定工作线程池，
+  mutex/条件变量、背压、优雅/立即关闭、pending 统计；Linux/pthread。
+- [`component/mempool`](component/mempool/)：固定大小块内存池，侵入式空闲链表 +
+  chunk 批量申请、对齐、扩容上限和统计；Windows/Linux，无外部依赖。
+
+详细设计见 [`component/README.md`](component/README.md)。
 
 ---
 
@@ -218,6 +231,9 @@ cmake -S . -B build
 cmake --build build -j
 ```
 
+`component/` 下的 `threadpool`、`mempool` 也在各自子目录用同样的 CMake 命令构建；
+其中 `threadpool` 需要 Linux + pthread，`mempool` 在 Windows/Linux 均可构建。
+
 `coroutine` 在仓库根目录下，构建方式相同：
 
 ```bash
@@ -295,6 +311,8 @@ gcc -O2 -Wall -Wextra -pthread \
 | `test` | ✅ | ❌（POSIX socket + pthread + poll） |
 | `coroutine` | ✅ | ❌（`ucontext` + `epoll`，需走 WSL / Linux 机器） |
 | `coroutine/NtyCo-master` | ✅ | ❌（`ucontext` + `epoll` + `dlsym`，仅 Linux） |
+| `component/threadpool` | ✅ | ❌（POSIX pthread） |
+| `component/mempool` | ✅ | ✅（C11，无 pthread） |
 | `DPDK/Ustack` | ✅（仅 VMware Ubuntu 虚拟机） | ❌（需要 vfio、大页和 Linux DPDK 环境） |
 
 ### 常见命令
