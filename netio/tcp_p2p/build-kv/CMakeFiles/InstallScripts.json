@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"/mnt/hgfs/daimacheshi/cpp_internet_study/netio/tcp_p2p/build-kv/cmake_install.cmake",
+		"/mnt/hgfs/daimacheshi/cpp_internet_study/netio/tcp_p2p/build-kv/kvstore/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

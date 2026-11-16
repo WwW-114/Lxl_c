@@ -53,7 +53,7 @@ static int kv_ensure_capacity(size_t need) {
 
   while(cap < need) {
     if(cap > (size_t)KVSTORE_TABLE_MAX_ENTRIES / 2) {
-      cap = KVSTORE_TABLE_MAX_ENTRIES;
+      cap = (size_t)KVSTORE_TABLE_MAX_ENTRIES;
       break;
     }
 
@@ -61,7 +61,7 @@ static int kv_ensure_capacity(size_t need) {
   }
 
   if(cap < need) {
-    return KVSTORE_TABLE_INIT_CAP;
+    return KVSTORE_TABLE_LIMIT;
   }
 
   kv_entry_t *entries = (kv_entry_t*)realloc(g_table.entries, cap * sizeof(kv_entry_t));
@@ -195,8 +195,8 @@ int kvstore_table_del(const char *key) {
   size_t pos = (size_t)idx;
   size_t last = g_table.count - 1;
 
-  free(g_table.entries[idx].key);
-  free(g_table.entries[idx].value);
+  free(g_table.entries[pos].key);
+  free(g_table.entries[pos].value);
 
   if(pos != last) {
     g_table.entries[pos] = g_table.entries[last];

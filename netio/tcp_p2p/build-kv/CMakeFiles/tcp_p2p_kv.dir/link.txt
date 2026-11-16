@@ -1,0 +1,1 @@
+/usr/bin/cc -O0 -g3 -DDEBUG -Wl,--dependency-file=CMakeFiles/tcp_p2p_kv.dir/link.d CMakeFiles/tcp_p2p_kv.dir/main.c.o CMakeFiles/tcp_p2p_kv.dir/reactor.c.o CMakeFiles/tcp_p2p_kv.dir/peer.c.o -o tcp_p2p_kv  kvstore/libkvstore_core.a

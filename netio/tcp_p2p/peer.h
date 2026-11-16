@@ -33,7 +33,12 @@ typedef struct peer {
   size_t send_sent;
   size_t send_cap;
   char *send_buff;
-    
+
+#ifdef TCP_P2P_KVSTORE
+  struct peer *next;
+  bool discarding;
+#endif
+  
 } peer_t;
 
 typedef struct peer_node {
@@ -41,6 +46,12 @@ typedef struct peer_node {
   int listen_fd;
   struct sockaddr_in listen_addr;
   peer_t *conn;
+
+#ifdef TCP_P2P_KVSTORE
+  peer_t *conns;
+  size_t conn_count; 
+#endif
+  
 }peer_node_t;
 
 peer_node_t* peer_node_create(reactor_t *reactor);

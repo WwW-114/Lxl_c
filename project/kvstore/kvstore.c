@@ -25,7 +25,7 @@ static kv_cmd_t kv_parse_cmd(const char *s, size_t len) {
   return KV_CMD_UNKNOWN;
 }
 
-static int kv_vaild_key(const char *s, size_t len) {
+static int kv_valid_key(const char *s, size_t len) {
   if(len == 0 || len > (size_t)KVSTORE_KEY_MAX) {
     return 0;
   }
@@ -41,7 +41,7 @@ static int kv_vaild_key(const char *s, size_t len) {
   return 1;
 }
 
-static int kv_vaild_value(const char *s, size_t len) {
+static int kv_valid_value(const char *s, size_t len) {
   if(len == 0 || len > (size_t)KVSTORE_VALUE_MAX) {
     return 0;
   }
@@ -52,7 +52,7 @@ static int kv_vaild_value(const char *s, size_t len) {
       return 0;
     }
   }
-  
+
   return 1;
 }
 
@@ -70,11 +70,11 @@ static int resp_append(char *buf, size_t cap, size_t *used, const char *fmt, ...
     return -1;
   }
 
-  if((size_t) n >= cap - *used) {
+  if((size_t)n >= cap - *used) {
     return -1;
   }
 
-  *used += n;
+  *used += (size_t)n;
   return 0;
 }
 
@@ -109,20 +109,23 @@ static int kv_map_table_status(int status, const char *key,
 }
 
 int kvstore_handle_request(const char *request, size_t request_len,
-                                  char *response, size_t response_cap, size_t *response_len) {
-  if(request == NULL || response == NULL || response_len == NULL || response_cap == 0) {
-    return 0;
+                           char *response, size_t response_cap,
+                           size_t *response_len) {
+  if(request == NULL || response == NULL || response_len == NULL ||
+     response_cap == 0) {
+    return -1;
   }
 
   response[0] = '\0';
-  response_len = 0;
+  *response_len = 0;
 
   if(memchr(request, '\0', request_len) != NULL) {
-    return kv_reply_error(response, response_cap, response_len, "BADREQ", "embedded null byte");
+    return kv_reply_error(response, response_cap, response_len,
+                          "BADREQ", "embedded null byte");
   }
 
   size_t pos = 0;
-  
+
   while(pos < request_len && kv_is_space(request[pos])) {
     ++pos;
   }
@@ -136,11 +139,12 @@ int kvstore_handle_request(const char *request, size_t request_len,
     ++pos;
   }
 
-  int cmd_len = pos - cmd_start;
+  size_t cmd_len = pos - cmd_start;
 
   kv_cmd_t cmd_type = kv_parse_cmd(request + cmd_start, cmd_len);
   if(cmd_type == KV_CMD_UNKNOWN) {
-    kv_reply_error(response, response_cap, response_len, "BADREQ", "unknown command");
+    return kv_reply_error(response, response_cap, response_len,
+                          "BADREQ", "unknown command");
   }
 
   while(pos < request_len && kv_is_space(request[pos])) {
@@ -148,7 +152,8 @@ int kvstore_handle_request(const char *request, size_t request_len,
   }
 
   if(pos == request_len) {
-    kv_reply_error(response, response_cap, response_len, "BADREQ", "missing key");
+    return kv_reply_error(response, response_cap, response_len,
+                          "BADREQ", "missing key");
   }
 
   size_t key_start = pos;
@@ -159,41 +164,48 @@ int kvstore_handle_request(const char *request, size_t request_len,
   size_t key_len = pos - key_start;
 
   if(key_len > (size_t)KVSTORE_KEY_MAX) {
-    kv_reply_error(response, response_cap, response_len, "TOOLONG", "key too long");
+    return kv_reply_error(response, response_cap, response_len,
+                          "TOOLONG", "key too long");
   }
 
-  if(kv_vaild_key(request + key_start, key_len) != 1) {
-    kv_reply_error(response, response_cap, response_len, "BADREQ", "invalid key");
+  if(kv_valid_key(request + key_start, key_len) != 1) {
+    return kv_reply_error(response, response_cap, response_len,
+                          "BADREQ", "invalid key");
   }
-  
+
   char tmp_key[KVSTORE_KEY_MAX + 1];
   memcpy(tmp_key, request + key_start, key_len);
   tmp_key[key_len] = '\0';
 
-  while(pos < request_len && kv_is_space(response[pos])) {
+  while(pos < request_len && kv_is_space(request[pos])) {
     ++pos;
   }
 
   if(cmd_type == KV_CMD_GET || cmd_type == KV_CMD_DEL) {
     if(pos != request_len) {
-      kv_reply_error(response, response_cap, response_len, "BADREQ", "unexpected arguments");
+      return kv_reply_error(response, response_cap, response_len,
+                            "BADREQ", "unexpected arguments");
     }
 
     if(cmd_type == KV_CMD_GET) {
       const char *value = kvstore_table_get(tmp_key);
       if(value == NULL) {
-        kv_reply_not_found(response, response_cap, response_len, tmp_key);
+        return kv_reply_not_found(response, response_cap,
+                                  response_len, tmp_key);
       }
 
-      return resp_append(response, response_cap, response_len, "+VALUE %s", value);
+      return resp_append(response, response_cap, response_len,
+                         "+VALUE %s", value);
     }
 
     int rc = kvstore_table_del(tmp_key);
-    return kv_map_table_status(rc, tmp_key, response, response_cap, response_len);
+    return kv_map_table_status(rc, tmp_key, response,
+                               response_cap, response_len);
   }
 
   if(pos == request_len) {
-    kv_reply_error(response, response_cap, response_len, "BADREQ", "missing value");
+    return kv_reply_error(response, response_cap, response_len,
+                          "BADREQ", "missing value");
   }
 
   size_t value_len = request_len - pos;
@@ -203,7 +215,7 @@ int kvstore_handle_request(const char *request, size_t request_len,
                           "TOOLONG", "value too long");
   }
 
-  if(!kv_vaild_value(request + pos, value_len)) {
+  if(!kv_valid_value(request + pos, value_len)) {
     return kv_reply_error(response, response_cap, response_len,
                           "BADREQ", "invalid value");
   }
@@ -219,4 +231,3 @@ int kvstore_handle_request(const char *request, size_t request_len,
   return kv_map_table_status(rc, tmp_key, response,
                              response_cap, response_len);
 }
-

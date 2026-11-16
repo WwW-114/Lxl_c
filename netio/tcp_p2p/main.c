@@ -17,6 +17,11 @@
 #include "reactor.h"
 #include "peer.h"
 
+#ifdef TCP_P2P_KVSTORE
+#include "kvstore.h"
+#include "kvstore_table.h"
+#endif
+
 static reactor_t *g_reactor = NULL;
 static peer_node_t *g_node = NULL;
 static const char* g_prog = "tcp_p2p";
@@ -62,6 +67,29 @@ static void stdin_flags_restore(void) {
 }
 
 void print_usage() {
+#ifdef TCP_P2P_KVSTORE
+  printf("Usage:\n");
+  printf("  KV server:  %s -l <port>\n", g_prog);
+  printf("  Interactive: %s                    # 启动后再用 /listen\n", g_prog);
+  printf("\n");
+  printf("Commands:\n");
+  printf("  /listen <port>          开始监听\n");
+  printf("  /unlisten               停止监听（已建立的连接保留）\n");
+  printf("  /disconnect             断开所有客户端\n");
+  printf("  /status                 查看监听、客户端与数据项状态\n");
+  printf("  /help                   显示本帮助\n");
+  printf("  /quit                   退出程序\n");
+  printf("\n");
+  printf("KV protocol (line based, '\\n' terminated):\n");
+  printf("  SET <key> <value>       插入或覆盖\n");
+  printf("  GET <key>               查询\n");
+  printf("  MOD <key> <value>       仅更新已存在的 key\n");
+  printf("  DEL <key>               删除\n");
+  printf("\n");
+  printf("Examples:\n");
+  printf("  %s -l 9001\n", g_prog);
+  printf("  printf 'SET a 1\\nGET a\\n' | nc 127.0.0.1 9001\n");
+#else
   printf("Usage:\n");
   printf("  Server mode: %s -l <port>\n", g_prog);
   printf("  Client mode: %s -c <host> <port>\n", g_prog);
@@ -80,15 +108,63 @@ void print_usage() {
   printf("Examples:\n");
   printf("  %s -l 8888              # 监听 8888 端口\n", g_prog);
   printf("  %s -c 127.0.0.1 8888    # 连接到 127.0.0.1:8888\n", g_prog);
+#endif
 }
 
 static bool port_ok(int port) {
-  return port > 0 && port <= 65535; 
+  return port > 0 && port <= 65535;
 }
 
 static int process_line(peer_node_t *node, char *line) {
   if (line[0] == '\0') return 0;                     /* 空行忽略 */
 
+#ifdef TCP_P2P_KVSTORE
+  if (line[0] != '/') {                              /* KV 服务器不转发本地文本 */
+    printf("[KV] server mode: use a KV client (or tcp_p2p -c) to send commands\n");
+    fflush(stdout);
+    return 0;
+  }
+
+  if (strcmp(line, "/quit") == 0) {
+    printf("[Main] Quitting...\n");
+    reactor_stop(g_reactor);
+    return -1;
+  }
+  if (strcmp(line, "/help") == 0) {
+    print_usage();
+    return 0;
+  }
+  if (strcmp(line, "/status") == 0) {
+    peer_node_status(node);
+    printf("[KV] 数据项: %zu\n", kvstore_table_count());
+    fflush(stdout);
+    return 0;
+  }
+  if (strcmp(line, "/disconnect") == 0) {
+    peer_node_disconnect(node);
+    return 0;
+  }
+  if (strcmp(line, "/unlisten") == 0) {
+    peer_node_unlisten(node);
+    return 0;
+  }
+  if (strncmp(line, "/listen ", 8) == 0) {
+    int port = atoi(line + 8);
+    if (!port_ok(port)) {
+      printf("[Input] 用法: /listen <port>  端口范围 1-65535\n");
+    } else {
+      peer_node_listen(node, NULL, port);
+    }
+    return 0;
+  }
+  if (strncmp(line, "/connect", 8) == 0) {
+    printf("[KV] server mode does not support /connect\n");
+    return 0;
+  }
+
+  printf("[Input] 未知命令 %s（/help 查看帮助）\n", line);
+  return 0;
+#else
   if (line[0] != '/') {                              /* 普通文本 = 发送 */
     if (peer_node_send(node, line, strlen(line)) >= 0) {
       printf("[Sent] %s\n", line);
@@ -141,6 +217,7 @@ static int process_line(peer_node_t *node, char *line) {
 
   printf("[Input] 未知命令 %s（/help 查看帮助）\n", line);
   return 0;
+#endif
 }
 
 static void handle_stdin(reactor_t *reactor, int fd, uint32_t events, void *arg) {
@@ -173,7 +250,7 @@ static void handle_stdin(reactor_t *reactor, int fd, uint32_t events, void *arg)
 
         g_line_buf[g_line_len++] = c;
       }
-      continue;    
+      continue;
     }
 
     if(n == 0) {
@@ -202,7 +279,14 @@ static void handle_stdin(reactor_t *reactor, int fd, uint32_t events, void *arg)
 
 int main(int argc, char* argv[]) {
   g_prog = argv[0];
-  
+
+#ifdef TCP_P2P_KVSTORE
+  if(kvstore_table_init() != KVSTORE_TABLE_OK) {
+    fprintf(stderr, "Failed to initialize kvstore table\n");
+    return 1;
+  }
+#endif
+
   signal(SIGINT, signal_handle);
   signal(SIGTERM, signal_handle);
   signal(SIGPIPE, SIG_IGN);
@@ -210,6 +294,9 @@ int main(int argc, char* argv[]) {
   g_reactor = reactor_create();
   if(g_reactor == NULL) {
     fprintf(stderr, "Failed to create reactor\n");
+#ifdef TCP_P2P_KVSTORE
+    kvstore_table_destroy();
+#endif
     return 1;
   }
 
@@ -217,9 +304,28 @@ int main(int argc, char* argv[]) {
   if(g_node == NULL) {
     fprintf(stderr, "Failed to create peer\n");
     reactor_destory(g_reactor);
+#ifdef TCP_P2P_KVSTORE
+    kvstore_table_destroy();
+#endif
     return 1;
   }
 
+#ifdef TCP_P2P_KVSTORE
+  if(argc >= 3 && strcmp(argv[1], "-l") == 0) {
+    int port = atoi(argv[2]);
+    if(!port_ok(port)) {
+      fprintf(stderr, "Invalid port %s\n", argv[2]);
+    } else if(peer_node_listen(g_node, NULL, port) < 0) {
+      fprintf(stderr, "监听失败，可在交互模式用 /listen 重试\n");
+    }
+  } else if(argc != 1) {
+    print_usage();
+    peer_node_destory(g_node);
+    reactor_destory(g_reactor);
+    kvstore_table_destroy();
+    return 1;
+  }
+#else
   if(argc >= 3 && strcmp(argv[1], "-l") == 0) {
     int port = atoi(argv[2]);
     if(!port_ok(port)) {
@@ -239,6 +345,7 @@ int main(int argc, char* argv[]) {
     print_usage();
     return 1;
   }
+#endif
 
   if(stdin_nonblock_enable() == 0 &&
      reactor_add(g_reactor, STDIN_FILENO, EPOLLIN, handle_stdin, g_node) == 0) {
@@ -247,7 +354,11 @@ int main(int argc, char* argv[]) {
     fprintf(stderr, "[Main] 无法把 stdin 注册进事件循环，将只处理网络事件\n");
   }
 
+#ifdef TCP_P2P_KVSTORE
+  printf("[KV] 事件循环已启动（Ctrl+C 退出，/help 查看命令）\n");
+#else
   printf("[Main] 事件循环已启动（Ctrl+C 退出，/help 查看命令）\n");
+#endif
   reactor_run(g_reactor);
 
   printf("[Main] Cleaning up...\n");
@@ -257,6 +368,10 @@ int main(int argc, char* argv[]) {
   peer_node_destory(g_node);
   reactor_destory(g_reactor);
 
+#ifdef TCP_P2P_KVSTORE
+  kvstore_table_destroy();
+#endif
+
   printf("[Main] Goodbye!\n");
-  return 0; 
+  return 0;
 }

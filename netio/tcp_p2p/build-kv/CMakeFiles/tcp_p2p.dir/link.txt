@@ -1,0 +1,1 @@
+/usr/bin/cc -O0 -g3 -DDEBUG -Wl,--dependency-file=CMakeFiles/tcp_p2p.dir/link.d CMakeFiles/tcp_p2p.dir/main.c.o CMakeFiles/tcp_p2p.dir/reactor.c.o CMakeFiles/tcp_p2p.dir/peer.c.o -o tcp_p2p

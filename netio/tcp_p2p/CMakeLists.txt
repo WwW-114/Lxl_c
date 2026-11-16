@@ -28,7 +28,7 @@ set(CMAKE_C_FLAGS_DEBUG   "-O0 -g3 -DDEBUG")
 set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG")
 set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O2 -g")
 
-# ---- 可执行文件 ----
+# ---- 基础版可执行文件 ----
 add_executable(${PROJECT_NAME}
     main.c
     reactor.c
@@ -40,11 +40,44 @@ target_include_directories(${PROJECT_NAME}
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+# ---- KV 服务器版本（条件编译）----
+option(TCP_P2P_KVSTORE "Build the KV-store server variant" OFF)
+
+if(TCP_P2P_KVSTORE)
+    set(KVSTORE_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../project/kvstore")
+
+    add_subdirectory(
+        "${KVSTORE_DIR}"
+        "${CMAKE_CURRENT_BINARY_DIR}/kvstore"
+    )
+
+    add_executable(tcp_p2p_kv
+        main.c
+        reactor.c
+        peer.c
+    )
+
+    target_include_directories(tcp_p2p_kv
+        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    target_compile_definitions(tcp_p2p_kv PRIVATE
+        TCP_P2P_KVSTORE=1
+    )
+
+    target_link_libraries(tcp_p2p_kv PRIVATE
+        kvstore_core
+    )
+endif()
+
 # ---- 安装规则（可选）----
 install(TARGETS ${PROJECT_NAME}
     RUNTIME DESTINATION bin
 )
 
-
-
-     
+if(TCP_P2P_KVSTORE)
+    install(TARGETS tcp_p2p_kv
+        RUNTIME DESTINATION bin
+    )
+endif()
