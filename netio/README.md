@@ -12,7 +12,7 @@ Linux 下 C/C++ 网络编程的练习集合。五个子项目分别打五个方�
 |------|------|--------|---------|
 | [`multi_io/`](multi_io/) | C++17 | 完整版 Reactor 网络库：`select`/`poll`/`epoll` 三种后端 + `TcpServer` + 自写 HTTP 服务器 | [README.md](multi_io/README.md)（**1543 行深度教学文档**） |
 | [`Mymulti_io/`](Mymulti_io/) | C++17 | 对照 `multi_io` 手写的练习版，用来检验掌握程度 | [README.md](Mymulti_io/README.md) |
-| [`tcp_p2p/`](tcp_p2p/) | C11 | 纯 C 的 epoll reactor + TCP **对等**通信程序 | [README.md](tcp_p2p/README.md) |
+| [`tcp_p2p/`](tcp_p2p/) | C11 | 纯 C 的 epoll reactor + TCP **对等**通信程序；同一份网络层还通过条件编译提供多客户端 **KV 服务器**变体 | [README.md](tcp_p2p/README.md) |
 | [`udp_kcp/`](udp_kcp/) | C++17 | 基于 KCP 的 UDP 文字聊天室 | [README.md](udp_kcp/README.md) |
 | [`io_uring/`](io_uring/) | C | 基于 liburing 的 TCP Echo Server：`accept`/`recv`/`send` 全部走 SQ/CQ，演示完成通知模型 | [README.md](io_uring/README.md) |
 
@@ -120,6 +120,21 @@ cmake -S . -B build && cmake --build build -j
 ./build/tcp_p2p -c 127.0.0.1 9001  # 连接对端
 ```
 
+同一份源码还提供可选的 **KV 服务器**变体，协议/存储核心位于
+[`../project/kvstore/`](../project/kvstore/)：
+
+```bash
+cmake -S . -B build-kv -DTCP_P2P_KVSTORE=ON
+cmake --build build-kv -j
+
+./build-kv/tcp_p2p_kv -l 9001      # 多客户端 KV 服务器
+printf 'SET a 1\nGET a\n' | timeout 2 nc 127.0.0.1 9001
+```
+
+基础版 `tcp_p2p` 与 KV 版 `tcp_p2p_kv` 由 `TCP_P2P_KVSTORE` 条件编译区分，
+基础版行为不变。完整协议与限制见
+[`../project/kvstore/README.md`](../project/kvstore/README.md)。
+
 ### `udp_kcp`
 
 ```bash
@@ -164,6 +179,7 @@ Windows / MSVC 不支持。
 | 事件循环 + 定时器驱动 | `multi_io`（超时参数）、`udp_kcp`（`ikcp_check` 算下一次唤醒时刻）、`io_uring/event_loop` |
 | 连接生命周期与回调中的对象失效 | `multi_io/conns_`、`udp_kcp/Session`、`tcp_p2p/peer_t`、`io_uring/conns[]` |
 | `SIGPIPE` 处理 | 四者都做了（Linux 上往已关闭的 socket 写会直接杀进程） |
+| 条件编译隔离两套行为 | `tcp_p2p` 的 `TCP_P2P_KVSTORE`（基础 P2P / KV 服务器） |
 
 ---
 
