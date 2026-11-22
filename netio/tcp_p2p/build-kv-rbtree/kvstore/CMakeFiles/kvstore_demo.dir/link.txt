@@ -1,0 +1,1 @@
+/usr/bin/c++ -g -Wl,--dependency-file=CMakeFiles/kvstore_demo.dir/link.d CMakeFiles/kvstore_demo.dir/kvstore_demo.c.o -o kvstore_demo  libkvstore_core.a

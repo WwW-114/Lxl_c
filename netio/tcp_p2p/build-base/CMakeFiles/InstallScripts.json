@@ -1,7 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/mnt/hgfs/daimacheshi/cpp_internet_study/netio/tcp_p2p/build-base/cmake_install.cmake"
-	],
-	"Parallel" : false
-}

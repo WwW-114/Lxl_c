@@ -3,6 +3,11 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 enum {
   KVSTORE_TABLE_OK = 0,
   KVSTORE_TABLE_NOT_FOUND = -1,
@@ -19,5 +24,9 @@ int kvstore_table_del(const char *key);
 int kvstore_table_mod(const char *key, const char *value);
 const char* kvstore_table_get(const char *key);
 size_t kvstore_table_count(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

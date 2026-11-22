@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.10)
 project(tcp_p2p
     VERSION 1.0.0
     DESCRIPTION "A simple TCP P2P implementation using the Reactor pattern"
-    LANGUAGES C
+    LANGUAGES C CXX
 )
 
 # ---- C 标准与编译选项 ----
@@ -69,6 +69,9 @@ if(TCP_P2P_KVSTORE)
     target_link_libraries(tcp_p2p_kv PRIVATE
         kvstore_core
     )
+
+    # 新增：kvstore_core 含 C++ 编译单元，链接时使用 C++ 链接器
+    set_target_properties(tcp_p2p_kv PROPERTIES LINKER_LANGUAGE CXX)
 endif()
 
 # ---- 安装规则（可选）----

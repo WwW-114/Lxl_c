@@ -1,7 +1,0 @@
-/mnt/hgfs/daimacheshi/cpp_internet_study/netio/tcp_p2p/build-base/CMakeFiles/tcp_p2p.dir
-/mnt/hgfs/daimacheshi/cpp_internet_study/netio/tcp_p2p/build-base/CMakeFiles/edit_cache.dir
-/mnt/hgfs/daimacheshi/cpp_internet_study/netio/tcp_p2p/build-base/CMakeFiles/rebuild_cache.dir
-/mnt/hgfs/daimacheshi/cpp_internet_study/netio/tcp_p2p/build-base/CMakeFiles/list_install_components.dir
-/mnt/hgfs/daimacheshi/cpp_internet_study/netio/tcp_p2p/build-base/CMakeFiles/install.dir
-/mnt/hgfs/daimacheshi/cpp_internet_study/netio/tcp_p2p/build-base/CMakeFiles/install/local.dir
-/mnt/hgfs/daimacheshi/cpp_internet_study/netio/tcp_p2p/build-base/CMakeFiles/install/strip.dir
