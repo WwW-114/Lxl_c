@@ -10,6 +10,8 @@
  *   -DKVSTORE_TABLE_BACKEND=rbtree  -> 定义 KVSTORE_TABLE_USE_RBTREE
  *       红黑树：使用 MyRedBlackTree.hpp 中的 MyRedBlackTree<K, V> 模板
  *
+ *   -DKVSTORE_TABLE_BACKEND=hash    -> 定义 KVSTORE_TABLE_USE_HASH
+ *       哈希表：使用 std::unordered_map<std::string, std::string>
  * 说明：
  *   1. 红黑树是 C++ 模板，因此本编译单元统一使用 C++ 编译；
  *      数组分支的代码与原 C 实现逐行一致，仅改由 C++ 编译器编译，
@@ -369,6 +371,141 @@ size_t kvstore_table_count() {
   return (g_tree == nullptr) ? 0 : g_tree->size();    
 }
 
+#elif defined (KVSTORE_TABLE_USE_HASH)
+
+#include <unordered_map>
+#include <cstring>
+#include <new>
+#include <string>
+
+typedef std::unordered_map<std::string, std::string> kv_hash_t;
+
+static kv_hash_t g_hash; 
+
+int kvstore_table_init() {
+    g_hash.clear();
+    return KVSTORE_TABLE_OK;
+}
+
+void kvstore_table_destroy() {
+  g_hash.clear();
+}
+
+int kvstore_table_set(const char *key, const char *value) {
+  if(key == nullptr || value == nullptr) {
+    return KVSTORE_TABLE_INVALID;
+  }
+
+  const size_t k_len = strlen(key);
+  const size_t v_len = strlen(value);
+
+  if(k_len == 0 || k_len > (size_t)KVSTORE_KEY_MAX || v_len == 0 || v_len > (size_t)KVSTORE_VALUE_MAX) {
+    return KVSTORE_TABLE_INVALID;
+  }
+
+  try {
+    std::string new_key(key, k_len);
+    std::string new_val(value, v_len);
+    auto slot = g_hash.find(new_key);
+
+    if(slot != g_hash.end()) {
+      g_hash[new_key] = new_val;
+      return KVSTORE_TABLE_OK; 
+    }
+
+    if(g_hash.size() >= (size_t)KVSTORE_TABLE_MAX_ENTRIES) {
+      return KVSTORE_TABLE_LIMIT;
+    }
+
+    g_hash.emplace(new_key, new_val);
+    return KVSTORE_TABLE_OK;
+  } catch (const std::bad_alloc &) {
+    return KVSTORE_TABLE_NOMEM;
+  }
+}
+
+int kvstore_table_mod(const char *key, const char *value) {
+  if(key == nullptr || value == nullptr) {
+    return KVSTORE_TABLE_INVALID;
+  }
+
+  const size_t k_len = strlen(key);
+  const size_t v_len = strlen(value);
+
+  if(k_len == 0 || k_len > (size_t)KVSTORE_KEY_MAX || v_len == 0 || v_len > (size_t)KVSTORE_VALUE_MAX) {
+    return KVSTORE_TABLE_INVALID;
+  }
+
+  try {
+    std::string new_key(key, k_len);
+    auto slot = g_hash.find(new_key);
+
+    if(slot == g_hash.end()) {
+      return KVSTORE_TABLE_NOT_FOUND; 
+    }
+
+    slot->second = std::string(value, v_len);
+    return KVSTORE_TABLE_OK;
+  } catch (const std::bad_alloc &) {
+    return KVSTORE_TABLE_NOMEM;
+  }
+}
+
+int kvstore_table_del(const char *key) {
+  if (key == nullptr || key[0] == '\0') {
+    return KVSTORE_TABLE_INVALID;
+  }
+
+  const size_t k_len = strlen(key);
+
+  if(k_len == 0 || k_len > (size_t)KVSTORE_KEY_MAX) {
+    return KVSTORE_TABLE_INVALID;
+  }
+
+  try {
+    std::string new_key(key, k_len);
+    auto slot = g_hash.find(new_key);
+
+    if(slot == g_hash.end()) {
+      return KVSTORE_TABLE_NOT_FOUND;
+    }
+
+    g_hash.erase(slot);
+    return KVSTORE_TABLE_OK;
+  } catch (const std::bad_alloc &) {
+    return KVSTORE_TABLE_NOMEM;
+  }
+}
+
+const char* kvstore_table_get(const char *key) {
+  if (key == nullptr || key[0] == '\0') {
+    return nullptr;
+  }
+
+  const size_t k_len = strlen(key);
+
+  if(k_len == 0 || k_len > (size_t)KVSTORE_KEY_MAX) {
+    return nullptr;
+  }
+
+  try {
+    std::string new_key(key, k_len);
+    auto slot = g_hash.find(new_key);
+
+    if(slot == g_hash.end()) {
+      return nullptr;
+    }
+    
+    return slot->second.c_str();
+  } catch (const std::bad_alloc &) {
+    return nullptr;
+  }
+}
+
+size_t kvstore_table_count() {
+  return g_hash.size();
+}
+
 #else
-#error "kvstore_table.cpp 需要 KVSTORE_TABLE_USE_ARRAY 或 KVSTORE_TABLE_USE_RBTREE 宏，请通过 CMake 选项 KVSTORE_TABLE_BACKEND 选择后端"
+#error "kvstore_table.cpp 需要 KVSTORE_TABLE_USE_... 宏，请通过 CMake 选项 KVSTORE_TABLE_BACKEND 选择后端"
 #endif

@@ -5,7 +5,7 @@
 
 | 目录 | 语言 | 平台 | 构建 | 一句话说明 | 详细文档 |
 |------|------|------|------|-----------|---------|
-| [`kvstore/`](kvstore/) | C11 | 核心跨平台；网络版 Linux | CMake（随 tcp_p2p 构建）/ gcc | 行文本协议的内存 KV 存储：`SET/GET/MOD/DEL`，既可独立 stdin demo，也可接入 `netio/tcp_p2p` 的 epoll reactor 变成多客户端 TCP KV 服务器 | [README.md](kvstore/README.md) |
+| [`kvstore/`](kvstore/) | C11 + C++17 | 核心跨平台；网络版 Linux | CMake（随 tcp_p2p 构建） | 行文本协议的内存 KV 存储：`SET/GET/MOD/DEL`；存储层可在可变长数组 / 红黑树 / 哈希表之间由 CMake 条件编译选择；既可独立 stdin demo，也可接入 `netio/tcp_p2p` 的 epoll reactor 变成多客户端 TCP KV 服务器 | [README.md](kvstore/README.md) |
 
 ---
 
@@ -15,11 +15,12 @@
 
 ```
 project/kvstore/
-├── kvstore.c / kvstore.h          命令解析、参数校验、响应生成
-├── kvstore_table.c / .h           内存数据表
+├── kvstore.c / kvstore.h          命令解析、参数校验、响应生成（C11）
+├── kvstore_table.cpp / .h         数据表：数组 / 红黑树 / 哈希条件编译（C++17 实现，C 接口）
+├── MyRedBlackTree.hpp             红黑树模板（rbtree 后端）
 ├── kvstore_config.h               长度、表项、客户端数量上限
 ├── kvstore_demo.c                 stdin 独立 demo
-└── CMakeLists.txt                 kvstore_core 静态库 + demo
+└── CMakeLists.txt                 后端选项 + kvstore_core 静态库 + demo
 ```
 
 网络接入点位于 `netio/tcp_p2p/`，通过 **条件编译** 复用同一份 reactor/peer：
@@ -47,9 +48,13 @@ cd <仓库根目录>/netio/tcp_p2p
 cmake -S . -B build-base -DTCP_P2P_KVSTORE=OFF
 cmake --build build-base -j
 
-# KV 服务器版
+# KV 服务器版（默认 array 后端）
 cmake -S . -B build-kv -DTCP_P2P_KVSTORE=ON
 cmake --build build-kv -j
+
+# 指定存储后端：array（默认）/ rbtree / hash
+cmake -S . -B build-kv-rbtree -DTCP_P2P_KVSTORE=ON -DKVSTORE_TABLE_BACKEND=rbtree
+cmake --build build-kv-rbtree -j
 
 ./build-kv/tcp_p2p_kv -l 9001
 ```
@@ -67,13 +72,13 @@ printf 'SET a 1\nGET a\n' | timeout 2 nc 127.0.0.1 9001
 +VALUE 1
 ```
 
-独立验证 KV 核心（不需要网络）：
+独立验证 KV 核心（不需要网络；kvstore 没有独立顶层 CMake，构建入口仍是 tcp_p2p）：
 
 ```bash
-cd <仓库根目录>/project/kvstore
-gcc -std=c11 -Wall -Wextra -Wpedantic -I. \
-    kvstore.c kvstore_table.c kvstore_demo.c -o kvstore_demo
-printf 'SET a 1\nGET a\n' | ./kvstore_demo
+cd <仓库根目录>/netio/tcp_p2p
+cmake -S . -B build-kv-array -DTCP_P2P_KVSTORE=ON -DKVSTORE_TABLE_BACKEND=array
+cmake --build build-kv-array -j
+printf 'SET a 1\nGET a\n' | ./build-kv-array/kvstore/kvstore_demo
 ```
 
 完整协议、边界行为、内存与并发说明见

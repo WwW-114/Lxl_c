@@ -1,31 +1,46 @@
 # kvstore —— 行文本协议的内存 KV 存储
 
-用 **C11** 实现的一个内存键值存储：核心只负责「解析一行命令 → 操作数据表 → 生成响应」，
-不依赖 socket；既可以单独跑 stdin demo，也可以通过 `TCP_P2P_KVSTORE` 条件编译
+用 **C11 + C++17** 实现的一个内存键值存储：协议层只用 C（`kvstore.c`），
+存储层 `kvstore_table.cpp` 在编译期通过条件编译在三种数据结构之间切换：
+**可变长数组**、**红黑树**（`MyRedBlackTree.hpp`）、**哈希表**（`std::unordered_map`）。
+核心只负责「解析一行命令 → 操作数据表 → 生成响应」，不依赖 socket；
+既可以单独跑 stdin demo，也可以通过 `TCP_P2P_KVSTORE` 条件编译
 接入 [`../../netio/tcp_p2p/`](../../netio/tcp_p2p/) 的 epoll reactor，变成多客户端
 TCP KV 服务器。
 
-- **语言**：C11
-- **存储**：内存动态数组，进程退出即丢失
+- **语言**：协议层 C11；存储层 C++17（对外保持 C 接口）
+- **存储**：编译期可选 `array` / `rbtree` / `hash` 三种后端，进程退出即丢失
 - **网络层**：复用 tcp_p2p 的 `reactor.c` + `peer.c`，不另起事件循环
 - **协议**：按行文本，`\n` 分隔，兼容 `\r\n`
-- **平台**：核心可独立编译；网络版仅 Linux（依赖 `<sys/epoll.h>`）
+- **平台**：核心跨平台（需要 C11 + C++17 编译器）；网络版仅 Linux（依赖 `<sys/epoll.h>`）
 
 ---
 
-## 1. 两种使用方式
+## 1. 构建与两种使用方式
 
-### 方式 A：独立 stdin demo
+`project/kvstore` 没有独立的顶层 CMake 项目，`kvstore_core` 由
+[`netio/tcp_p2p/CMakeLists.txt`](../../netio/tcp_p2p/CMakeLists.txt) 通过
+`add_subdirectory` 引入。因此**所有构建都从 tcp_p2p 目录发起**，并通过
+`KVSTORE_TABLE_BACKEND` 选择存储后端（`array` / `rbtree` / `hash`）。
 
-`kvstore_demo.c` 从 stdin 读一行、调用协议层、打印响应。适合先单独验证
-解析、存储和内存管理，不涉及网络。
+> 不再提供手动 `gcc` 编译 demo 的方式：`kvstore_table.cpp` 是 C++ 编译单元，
+> 三个后端分支由 CMake 注入的 `KVSTORE_TABLE_USE_*` 宏选择，直接编译会触发
+> 文件内的 `#error` 守卫。
+
+### 方式 A：独立 stdin demo（不涉及网络）
+
+`kvstore_demo.c` 从 stdin 读一行、调用协议层、打印响应。它和库一起由 CMake
+构建，不需要启动网络：
 
 ```bash
-cd <仓库根目录>/project/kvstore
-gcc -std=c11 -Wall -Wextra -Wpedantic -I. \
-    kvstore.c kvstore_table.c kvstore_demo.c -o kvstore_demo
+cd <仓库根目录>/netio/tcp_p2p
 
-printf 'SET a 1\nGET a\nMOD a 2\nGET a\nDEL a\nGET a\n' | ./kvstore_demo
+# 默认 array 后端
+cmake -S . -B build-kv-array -DTCP_P2P_KVSTORE=ON -DKVSTORE_TABLE_BACKEND=array
+cmake --build build-kv-array -j
+
+printf 'SET a 1\nGET a\nMOD a 2\nGET a\nDEL a\nGET a\n' \
+  | ./build-kv-array/kvstore/kvstore_demo
 ```
 
 预期输出：
@@ -41,15 +56,10 @@ printf 'SET a 1\nGET a\nMOD a 2\nGET a\nDEL a\nGET a\n' | ./kvstore_demo
 
 ### 方式 B：TCP KV 服务器
 
-在 tcp_p2p 目录用 CMake 打开 `TCP_P2P_KVSTORE`，会同时构建基础版 `tcp_p2p`
-和 KV 版 `tcp_p2p_kv`：
+同一个 build 目录里还会生成 `tcp_p2p_kv`：
 
 ```bash
-cd <仓库根目录>/netio/tcp_p2p
-cmake -S . -B build-kv -DTCP_P2P_KVSTORE=ON
-cmake --build build-kv -j
-
-./build-kv/tcp_p2p_kv -l 9001
+./build-kv-array/tcp_p2p_kv -l 9001
 ```
 
 基础版 `tcp_p2p` 的行为、日志、单连接语义保持不变；KV 版通过宏
@@ -63,11 +73,12 @@ cmake --build build-kv -j
 project/kvstore/
 ├── kvstore_config.h      key/value/请求/响应/表项/客户端数量上限
 ├── kvstore.h             对外协议接口 kvstore_handle_request()
-├── kvstore.c             命令解析、参数校验、响应生成
-├── kvstore_table.h       数据表 CRUD 接口
-├── kvstore_table.c       动态数组存储、扩容、SET/MOD/DEL
+├── kvstore.c             命令解析、参数校验、响应生成（C11）
+├── kvstore_table.h       数据表 CRUD 接口（extern "C"，供 C 侧调用）
+├── kvstore_table.cpp     三种存储后端的条件编译实现（C++17）
+├── MyRedBlackTree.hpp    红黑树模板，仅 rbtree 后端使用
 ├── kvstore_demo.c        stdin 独立 demo
-├── CMakeLists.txt        生成 kvstore_core 静态库与 kvstore_demo
+├── CMakeLists.txt        后端选项 + kvstore_core 静态库 + kvstore_demo
 └── README.md
 ```
 
@@ -201,7 +212,10 @@ kvstore_handle_request()
    │   解析命令、校验参数、调用数据表、生成响应
    ▼
 kvstore_table_*()
-   │   动态数组：查找 / 覆盖 / 删除 / 扩容
+   │   存储后端（编译期三选一）：
+   │     array  = 可变长数组（malloc / realloc / free）
+   │     rbtree = MyRedBlackTree<std::string, std::string>
+   │     hash   = std::unordered_map<std::string, std::string>
    ▼
 响应字符串
    │
@@ -220,6 +234,10 @@ TCP 字节流
 - `TCP_P2P_KVSTORE` 通过 CMake 的 `target_compile_definitions` 对整个
   `tcp_p2p_kv` 目标生效，保证 `main.c` 和 `peer.c` 看到的 `peer_t /
   peer_node_t` 布局一致。
+- `KVSTORE_TABLE_BACKEND` 通过 `target_compile_definitions` 给 `kvstore_core`
+  注入 `KVSTORE_TABLE_USE_ARRAY` / `KVSTORE_TABLE_USE_RBTREE` /
+  `KVSTORE_TABLE_USE_HASH` 之一，`kvstore_table.cpp` 用 `#if / #elif`
+  选择实现；三者互斥，不会同时参与编译。
 - `peer.c` 中所有 KV 行为都在 `#ifdef TCP_P2P_KVSTORE ... #else 原代码 ... #endif` 内。
 - `reactor.c/h` 完全不需要修改。
 - 基础目标 `tcp_p2p` 不定义宏、不链接 `kvstore_core`。
@@ -265,60 +283,90 @@ size_t conn_count;
 
 ---
 
-## 5. 数据表实现
+## 5. 数据表实现：三种可切换后端
 
-`kvstore_table.c` 使用动态数组：
+数据表的对外接口固定在 `kvstore_table.h`，内部实现由 `kvstore_table.cpp`
+中的条件编译在三种数据结构之间选择：
 
-```c
-typedef struct {
-  char *key;
-  char *value;
-} kv_entry_t;
+| `KVSTORE_TABLE_BACKEND` | 宏 | 数据结构 | 查找 / 插入 / 删除 |
+|---|---|---|---|
+| `array`（默认） | `KVSTORE_TABLE_USE_ARRAY` | 可变长数组 `kv_entry_t[]` | O(n) 线性查找；删除用末项覆盖空洞 |
+| `rbtree` | `KVSTORE_TABLE_USE_RBTREE` | `MyRedBlackTree<std::string, std::string>` | O(log n) |
+| `hash` | `KVSTORE_TABLE_USE_HASH` | `std::unordered_map<std::string, std::string>` | 平均 O(1)，最坏 O(n) |
 
-typedef struct {
-  kv_entry_t *entries;
-  size_t count;
-  size_t cap;
-} kv_table_t;
+源码结构：
+
+```cpp
+#if defined(KVSTORE_TABLE_USE_ARRAY)
+    /* kv_entry_t / kv_table_t + malloc / realloc / free（原 C 实现） */
+#elif defined(KVSTORE_TABLE_USE_RBTREE)
+    /* MyRedBlackTree<std::string, std::string> */
+#elif defined(KVSTORE_TABLE_USE_HASH)
+    /* std::unordered_map<std::string, std::string> */
+#else
+#error "... 请通过 CMake 选项 KVSTORE_TABLE_BACKEND 选择后端"
+#endif
 ```
 
-操作语义：
+为什么整个文件是 `.cpp`：
 
-- `SET`：线性查找；存在则替换 value，不存在则追加；达到上限返回 `LIMIT`。
-- `GET`：线性查找，返回内部指针；调用方在本次请求内立即复制到响应。
+- 红黑树是 C++ 模板，`std::unordered_map` 也是 C++ 容器，编译单元必须按 C++ 编译；
+- 数组分支的 `kv_entry_t` / `kv_table_t`、`malloc / realloc / free` 和删除时
+  “末项覆盖空洞”的逻辑与原来的 C 实现逐行一致，改由 C++ 编译器编译后行为不变；
+- 对外函数在 `kvstore_table.h` 的 `extern "C"` 块中声明，C 侧（`kvstore.c`、
+  `peer.c`、`main.c`）按普通 C 函数调用，不需要任何修改。
+
+操作语义（三种后端一致）：
+
+- `SET`：key 存在则覆盖 value；不存在则插入。覆盖不受上限影响；插入时若
+  `size >= KVSTORE_TABLE_MAX_ENTRIES` 返回 `LIMIT`。
+- `GET`：查找并返回内部指针；调用方（`kvstore.c`）在本次请求内立即复制到响应。
 - `MOD`：只更新已存在的 key；不存在返回 `NOT_FOUND`。
-- `DEL`：释放 key/value，用最后一项覆盖空洞，`count--`。
-- `destroy`：释放全部 key/value 和数组。
+- `DEL`：仅删除已存在的 key；不存在返回 `NOT_FOUND`。
+- `NOMEM`：数组后端对应 `malloc / realloc` 失败；C++ 后端统一捕获
+  `std::bad_alloc`，异常不会越过 `extern "C"` 边界。
 
-为什么先用线性数组：
-
-- 当前定位是网络编程学习项目，表项规模不大；
-- 动态数组比哈希表更容易验证内存管理和边界；
-- 对外接口稳定，后续可以把 `kvstore_table.c` 内部替换成链式哈希表，
-  不影响协议层和网络层。
+为什么保留三种实现：这是学习项目，用来对比同一接口下线性结构、平衡树和哈希表
+在代码形态、复杂度和内存管理上的差异；协议层和网络层完全不需要感知后端变化。
 
 ---
 
 ## 6. 构建与运行
 
-### 6.1 网络版
+### 6.1 三种后端
 
 ```bash
 cd <仓库根目录>/netio/tcp_p2p
 
-# 基础版：行为与改造前一致
-cmake -S . -B build-base -DTCP_P2P_KVSTORE=OFF
-cmake --build build-base -j
+# array（默认，可省略 -DKVSTORE_TABLE_BACKEND）
+cmake -S . -B build-kv-array -DTCP_P2P_KVSTORE=ON -DKVSTORE_TABLE_BACKEND=array
+cmake --build build-kv-array -j
 
-# KV 服务器版
-cmake -S . -B build-kv -DTCP_P2P_KVSTORE=ON
-cmake --build build-kv -j
+# rbtree
+cmake -S . -B build-kv-rbtree -DTCP_P2P_KVSTORE=ON -DKVSTORE_TABLE_BACKEND=rbtree
+cmake --build build-kv-rbtree -j
+
+# hash
+cmake -S . -B build-kv-hash -DTCP_P2P_KVSTORE=ON -DKVSTORE_TABLE_BACKEND=hash
+cmake --build build-kv-hash -j
 ```
 
-启动：
+- configure 阶段会打印 `kvstore table backend: <name>`，可直接确认选中的实现。
+- `KVSTORE_TABLE_BACKEND` 是 CMake cache 变量：切换后端建议使用新的 build
+  目录；若在同一目录切换，重新 configure 时必须显式带 `-DKVSTORE_TABLE_BACKEND=...`。
+- 基础版 `tcp_p2p` 的构建方式不变：
 
 ```bash
-./build-kv/tcp_p2p_kv -l 9001
+cmake -S . -B build-base -DTCP_P2P_KVSTORE=OFF
+cmake --build build-base -j
+```
+
+### 6.2 启动与交互
+
+启动（以 hash 后端为例，其他后端替换 build 目录名即可）：
+
+```bash
+./build-kv-hash/tcp_p2p_kv -l 9001
 ```
 
 服务器交互命令：
@@ -336,7 +384,7 @@ cmake --build build-kv -j
 KV 服务器模式不支持 `/connect`；需要客户端时使用基础版 `tcp_p2p -c`、
 `nc` 或自己的 TCP 客户端。
 
-### 6.2 用 `nc` 测试
+### 6.3 用 `nc` 测试
 
 ```bash
 printf 'SET user:1 alice\nGET user:1\nMOD user:1 bob\nGET user:1\nDEL user:1\nGET user:1\n' \
@@ -390,14 +438,14 @@ s.close()
 PY
 ```
 
-### 6.3 基础版客户端兼容测试
+### 6.4 基础版客户端兼容测试
 
 基础版 tcp_p2p 客户端不解析 KV 协议，只是按行发送、按行打印收到的内容，
 因此可以直接拿来当 KV 客户端：
 
 ```bash
 # 终端 1：KV 服务器
-./build-kv/tcp_p2p_kv -l 9001
+./build-kv-array/tcp_p2p_kv -l 9001
 
 # 终端 2：基础版客户端
 ./build-base/tcp_p2p -c 127.0.0.1 9001
@@ -419,10 +467,10 @@ GET a
 
 这同时验证了「基础版行为未被破坏」和「KV 服务器可被普通 TCP 客户端访问」。
 
-### 6.4 独立 demo
+### 6.5 独立 demo
 
-见本文第 1 节。网络版构建时也会生成
-`build-kv/kvstore/kvstore_demo`，可以直接运行。
+见本文第 1 节。任意后端的构建目录都会生成
+`build-kv-<backend>/kvstore/kvstore_demo`，可以直接运行。
 
 ---
 
@@ -432,11 +480,16 @@ GET a
   因此不需要 mutex。
 - `GET` 返回表内部指针，调用方必须在本次请求内复制到响应；当前实现是
   「取出 → `resp_append` 复制」的立即使用模式。
-- `SET/MOD` 覆盖已有 key 时，先分配新 value，成功后再释放旧 value，
-  分配失败不会破坏旧数据。
+- 三种后端的内存管理：
+  - `array`：每个 key/value 用 `malloc` 复制，扩容时 `realloc`，`destroy`
+    逐个 `free`；删除时释放空洞项并用最后一项覆盖。
+  - `rbtree`：每个节点 `new` / `delete`，哨兵 `_nil` 在树析构时释放；
+    覆盖 value 时先构造新 `std::string` 再赋值，分配失败不会破坏旧值。
+  - `hash`：节点由 `std::unordered_map` 管理；`destroy` 调用 `clear()`
+    释放全部节点，静态表对象在进程退出时析构。
 - 表项预算：`KVSTORE_TABLE_MAX_ENTRIES × (key + value)`，默认最坏约
   10000 × 2KB 量级，实际远小于此。生产使用应进一步限制总字节数。
-- 程序退出时 `kvstore_table_destroy()` 释放全部表项；网络连接在
+- 程序退出时 `kvstore_table_destroy()` 释放当前后端的全部表项；网络连接在
   `peer_node_destory()` 中统一关闭。
 
 ---
@@ -448,7 +501,9 @@ GET a
 - 没有持久化（RDB/AOF/快照），重启即丢失。
 - 没有认证、TLS、访问控制；默认监听 `0.0.0.0`，仅适合本地实验。
 - 没有 TTL/过期、订阅/发布、事务、批量命令。
-- 数据表是 O(n) 线性查找；数据量大时可替换为链式哈希表。
+- 默认 `array` 后端是 O(n) 线性查找；需要更好性能时通过
+  `-DKVSTORE_TABLE_BACKEND=rbtree`（O(log n)）或
+  `-DKVSTORE_TABLE_BACKEND=hash`（平均 O(1)）切换，协议层和网络层无需改动。
 - 单线程处理所有客户端；需要更高吞吐时可引入多 reactor/线程池，
   并为数据表加锁或分片。
 - 协议是文本行协议，value 不能包含 NUL/CR/LF；需要二进制安全时可改成
@@ -459,26 +514,33 @@ GET a
 ## 9. 快速检查清单
 
 ```bash
-# 1. 核心 demo
-printf 'SET a 1\nGET a\nMOD a 2\nGET a\nDEL a\nGET a\n' | ./kvstore_demo
+# 1. 构建三种后端之一（以 hash 为例；array / rbtree 同理）
+cd <仓库根目录>/netio/tcp_p2p
+cmake -S . -B build-kv-hash -DTCP_P2P_KVSTORE=ON -DKVSTORE_TABLE_BACKEND=hash
+cmake --build build-kv-hash -j
 
-# 2. 基础版回归
-cd ../../netio/tcp_p2p
+# 2. 核心 demo（不需要网络）
+printf 'SET a 1\nGET a\nMOD a 2\nGET a\nDEL a\nGET a\n' \
+  | ./build-kv-hash/kvstore/kvstore_demo
+
+# 3. 基础版回归
+cmake -S . -B build-base -DTCP_P2P_KVSTORE=OFF
+cmake --build build-base -j
 ./build-base/tcp_p2p -l 9001
 ./build-base/tcp_p2p -c 127.0.0.1 9001
 
-# 3. KV 版
-./build-kv/tcp_p2p_kv -l 9001
+# 4. KV 版
+./build-kv-hash/tcp_p2p_kv -l 9001
 printf 'SET a 1\nGET a\nDEL a\nGET a\n' | timeout 2 nc 127.0.0.1 9001
 
-# 4. 错误路径
+# 5. 错误路径
 printf 'GET\nSET k\nGET k extra\nFOO x\n' | timeout 2 nc 127.0.0.1 9001
 
-# 5. 多客户端
+# 6. 多客户端
 # 两个终端分别 nc 127.0.0.1 9001，一个 SET，另一个 GET
 
-# 6. 内存检查
-valgrind --leak-check=full ./build-kv/tcp_p2p_kv -l 9001
+# 7. 内存检查
+valgrind --leak-check=full ./build-kv-hash/tcp_p2p_kv -l 9001
 ```
 
 ---

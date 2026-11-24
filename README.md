@@ -27,7 +27,7 @@ cpp_internet_study/
 │   ├── udp_kcp/                  [C++17] 基于 KCP 的 UDP 聊天室
 │   └── io_uring/                 [C]     基于 liburing 的 TCP Echo Server（SQ/CQ 完成通知）
 ├── project/                      综合项目
-│   └── kvstore/                  [C11]   行文本协议内存 KV 存储 + tcp_p2p 网络化
+│   └── kvstore/                  [C11/C++17] 行文本协议内存 KV 存储（数组/红黑树/哈希后端）+ tcp_p2p 网络化
 ├── coroutine/                    [C++17 / C] 基于 ucontext + epoll 的协程网络 I/O 框架
 │   └── NtyCo-master/             [C]     第三方 NtyCo 源码快照（参考实现，Makefile 构建）
 ├── test/                         [C]     TCP 回显服务器 QPS 压测客户端（多线程 / 多连接 / pipeline）
@@ -49,7 +49,7 @@ cpp_internet_study/
 | [`netio/tcp_p2p`](netio/tcp_p2p/) | C11 | Linux | CMake | 用 C 写的 epoll reactor，上面做一个**对等**的 TCP 通信程序，两端都能监听也能连接；同一份网络层还通过 `TCP_P2P_KVSTORE` 条件编译提供多客户端 KV 服务器变体 |
 | [`netio/udp_kcp`](netio/udp_kcp/) | C++17 | Linux | CMake | 基于 skywind3000 的 KCP 实现的文字聊天室：昵称登录、群聊广播、心跳断线检测 |
 | [`netio/io_uring`](netio/io_uring/) | C | Linux（内核 ≥ 5.6） | gcc + 仓库内 liburing | 用 liburing 的 accept/recv/send 实现 TCP 回显；单次 shot 模型，演示 SQE/CQE、`user_data` 编码、短写与缓冲区生命周期 |
-| [`project/kvstore`](project/kvstore/) | C11 | 核心跨平台；网络版 Linux | CMake（随 tcp_p2p 构建）/ gcc | 行文本协议内存 KV 存储：`SET/GET/MOD/DEL`；核心可独立 stdin demo，也可接入 `netio/tcp_p2p` 的 epoll reactor 变成多客户端 TCP KV 服务器 |
+| [`project/kvstore`](project/kvstore/) | C11 / C++17 | 核心跨平台；网络版 Linux | CMake（随 tcp_p2p 构建） | 行文本协议内存 KV 存储：`SET/GET/MOD/DEL`；存储层在可变长数组 / 红黑树 / 哈希表之间由 CMake 条件编译选择；核心可独立 stdin demo，也可接入 `netio/tcp_p2p` 的 epoll reactor 变成多客户端 TCP KV 服务器 |
 | [`test`](test/) | C | Linux | gcc + pthread | 面向 `io_uring/echo_server` 的 QPS 压测客户端：v1 一线程一连接同步发收；v2 多线程 × 多连接 × pipeline、应用层分帧，统计 QPS / RTT / 吞吐并验证拆包与粘包 |
 | [`coroutine`](coroutine/) | C++17 | Linux | CMake | 用 ucontext 保存协程栈、epoll 唤醒协程，把同步写法跑在非阻塞 socket 上 |
 | [`coroutine/NtyCo-master`](coroutine/NtyCo-master/) | C | Linux | Makefile | 第三方 NtyCo 源码快照：ucontext 协程 + epoll + dlsym hook，附 echo / HTTP / WebSocket / MySQL / Redis / 压测示例，作为自写框架的参考实现 |
@@ -95,7 +95,8 @@ cpp_internet_study/
 
 `project/kvstore` 则是在第 3 条主线之上再走一步：同一套 `reactor/peer` 通过
 `TCP_P2P_KVSTORE` 条件编译接入行协议与内存存储，把“文本对聊”扩成多客户端
-KV 服务器。它不新增第 7 条主线，而是第 3 条主线的应用层落点。
+KV 服务器；存储层本身又用 `KVSTORE_TABLE_BACKEND` 在可变长数组、红黑树、
+哈希表三种实现之间做编译期选择。它不新增第 7 条主线，而是第 3 条主线的应用层落点。
 
 ---
 
@@ -241,18 +242,25 @@ cmake --build build -j
 `component/` 下的 `threadpool`、`mempool` 也在各自子目录用同样的 CMake 命令构建；
 其中 `threadpool` 需要 Linux + pthread，`mempool` 在 Windows/Linux 均可构建。
 
-`project/kvstore` 的核心不依赖网络，可单独用 gcc 编译 demo；网络版不单独建顶层
-CMake，而是作为 `netio/tcp_p2p` 的可选目标构建：
+`project/kvstore` 的核心不依赖网络，但存储层含 C++17 编译单元，不单独建顶层
+CMake 项目，而是作为 `netio/tcp_p2p` 的可选目标构建。存储后端由
+`KVSTORE_TABLE_BACKEND` 选择：`array`（默认）/ `rbtree` / `hash`：
 
 ```bash
-cd project/kvstore
-gcc -std=c11 -Wall -Wextra -Wpedantic -I. \
-    kvstore.c kvstore_table.c kvstore_demo.c -o kvstore_demo
+cd netio/tcp_p2p
 
-cd ../../netio/tcp_p2p
+# 默认 array 后端：生成 tcp_p2p_kv 与 kvstore_demo
 cmake -S . -B build-kv -DTCP_P2P_KVSTORE=ON
 cmake --build build-kv -j
 ./build-kv/tcp_p2p_kv -l 9001
+./build-kv/kvstore/kvstore_demo
+
+# 切换到红黑树 / 哈希表后端
+cmake -S . -B build-kv-rbtree -DTCP_P2P_KVSTORE=ON -DKVSTORE_TABLE_BACKEND=rbtree
+cmake --build build-kv-rbtree -j
+
+cmake -S . -B build-kv-hash -DTCP_P2P_KVSTORE=ON -DKVSTORE_TABLE_BACKEND=hash
+cmake --build build-kv-hash -j
 ```
 
 基础版 `tcp_p2p` 仍然用原来的 `cmake -S . -B build` 构建，行为不变。
@@ -329,7 +337,7 @@ gcc -O2 -Wall -Wextra -pthread \
 | `multi_io` | ✅ | ✅（MSVC，`select` 后端 + HTTP 层全部可用） |
 | `Mymulti_io` | ✅ | ❌ |
 | `tcp_p2p` | ✅ | ❌（直接依赖 `<sys/epoll.h>`） |
-| `project/kvstore` | ✅（核心 demo + KV 服务器） | ✅（核心 demo；网络版依赖 epoll，仅 Linux） |
+| `project/kvstore` | ✅（核心 demo + KV 服务器，需 C11 + C++17 编译器） | ✅（核心 demo；网络版依赖 epoll，仅 Linux） |
 | `udp_kcp` | ✅ | ❌（POSIX socket；CMake 里有 `if(NOT UNIX)` 硬拦截） |
 | `netio/io_uring` | ✅ | ❌（io_uring 是 Linux 内核接口） |
 | `test` | ✅ | ❌（POSIX socket + pthread + poll） |

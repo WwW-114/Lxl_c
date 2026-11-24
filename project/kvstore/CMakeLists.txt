@@ -5,16 +5,18 @@
 # rbtree : 红黑树（MyRedBlackTree.hpp）
 
 set (KVSTORE_TABLE_BACKEND "array" CACHE STRING
-    "kvstore table backend: array = dynamic array, rbtree = red-black tree")
+    "kvstore table backend: array = dynamic array, rbtree = red-black tree, hash = unordered_map")
 set_property (CACHE KVSTORE_TABLE_BACKEND PROPERTY STRINGS array rbtree)
 
 if (KVSTORE_TABLE_BACKEND STREQUAL "array")
     set (KVSTORE_TABLE_DEF KVSTORE_TABLE_USE_ARRAY=1)
 elseif (KVSTORE_TABLE_BACKEND STREQUAL "rbtree")
     set (KVSTORE_TABLE_DEF KVSTORE_TABLE_USE_RBTREE=1)
+elseif (KVSTORE_TABLE_BACKEND STREQUAL "hash")
+    set (KVSTORE_TABLE_DEF KVSTORE_TABLE_USE_HASH=1)
 else()
     message(FATAL_ERROR
-        "KVSTORE_TABLE_BACKEND must be 'array' or 'rbtree', got: '${KVSTORE_TABLE_BACKEND}'")
+        "KVSTORE_TABLE_BACKEND must be 'array', 'rbtree' or 'hash', got: '${KVSTORE_TABLE_BACKEND}'")
 endif()
 
 message(STATUS "kvstore table backend: ${KVSTORE_TABLE_BACKEND}")

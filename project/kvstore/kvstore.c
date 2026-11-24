@@ -126,7 +126,7 @@ int kvstore_handle_request(const char *request, size_t request_len,
 
   size_t pos = 0;
 
-  while(pos < request_len && kv_is_space(request[pos])) {
+ while(pos < request_len && kv_is_space(request[pos])) {
     ++pos;
   }
 
