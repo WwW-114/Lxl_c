@@ -11,8 +11,8 @@
 在用户态轮询收包、解析 Ethernet/IPv4/UDP/TCP/ICMP 并回显给发送端，同时实现 ARP
 应答器和 ICMP Echo Reply（支持 ping），使用 Makefile + pkg-config 构建。
 
-此外，`component/` 是池化结构与并发组件的学习分支，当前包含线程池和内存池，
-与网络主线相对独立。
+此外，`component/` 是池化结构与并发组件的学习分支，当前包含线程池、内存池和
+同步 / 异步 MySQL 连接池，与网络主线相对独立。
 
 ---
 
@@ -33,7 +33,8 @@ cpp_internet_study/
 ├── test/                         [C]     TCP 回显服务器 QPS 压测客户端（多线程 / 多连接 / pipeline）
 ├── component/                    池化结构与并发组件（非网络主线）
 │   ├── threadpool/               [C11] 队列与线程池分离的有界阻塞线程池（CMake）
-│   └── mempool/                  [C11] 固定大小块内存池：侵入式空闲链表 + chunk 扩容（CMake）
+│   ├── mempool/                  [C11] 固定大小块内存池：侵入式空闲链表 + chunk 扩容（CMake）
+│   └── mysqlconnection/          [C++17] 同步 / 异步 MySQL 连接池（Linux/libmysqlclient）
 └── DPDK/                         DPDK 用户态协议栈
     └── Ustack/                   [C]     轮询 vmxnet3，解析 IPv4 + UDP/TCP，Makefile 构建
 ```
@@ -55,6 +56,7 @@ cpp_internet_study/
 | [`coroutine/NtyCo-master`](coroutine/NtyCo-master/) | C | Linux | Makefile | 第三方 NtyCo 源码快照：ucontext 协程 + epoll + dlsym hook，附 echo / HTTP / WebSocket / MySQL / Redis / 压测示例，作为自写框架的参考实现 |
 | [`component/threadpool`](component/threadpool/) | C11 | Linux | CMake | 队列与线程池分离的有界阻塞线程池：mutex + 条件变量、背压、优雅/立即关闭、pending 统计 |
 | [`component/mempool`](component/mempool/) | C11 | Windows / Linux | CMake | 固定大小块内存池：侵入式空闲链表、chunk 批量申请、对齐、扩容上限、统计；基础版单线程 |
+| [`component/mysqlconnection`](component/mysqlconnection/) | C++17 | Linux | CMake | 同步 + 异步 MySQL 连接池：RAII 借还、健康检查、空闲回收、有界任务队列、future/回调、统计；当前提供静态库 |
 | [`DPDK/Ustack`](DPDK/Ustack/) | C | Linux（VMware 虚拟机） | Makefile | DPDK 24.11.7 接管 vmxnet3，轮询收包，解析 Ethernet/IPv4/UDP/TCP/ICMP，打印 payload 并回显；实现 ARP 应答器和 ICMP Echo Reply（ping）；含大页、vfio、VMnet、ARP 动态解析的完整排错记录 |
 
 > `coroutine/` 目录还保留了 `setjmp/longjmp` 与 `ucontext` 的最小实验，作为理解协程切换的前置材料，详见它自己的 README。
@@ -71,8 +73,12 @@ cpp_internet_study/
   mutex/条件变量、背压、优雅/立即关闭、pending 统计；Linux/pthread。
 - [`component/mempool`](component/mempool/)：固定大小块内存池，侵入式空闲链表 +
   chunk 批量申请、对齐、扩容上限和统计；Windows/Linux，无外部依赖。
+- [`component/mysqlconnection`](component/mysqlconnection/)：同步 + 异步 MySQL
+  连接池，连接复用、RAII 借还、健康检查、空闲回收、有界任务队列和
+  future/回调；需要 libmysqlclient / libmariadb 与可访问的 MySQL 服务端。
 
-详细设计见 [`component/README.md`](component/README.md)。
+详细设计见 [`component/README.md`](component/README.md)；MySQL 连接池的 API、构建和
+手工验证见 [`component/mysqlconnection/README.md`](component/mysqlconnection/README.md)。
 
 ---
 
@@ -239,8 +245,11 @@ cmake -S . -B build
 cmake --build build -j
 ```
 
-`component/` 下的 `threadpool`、`mempool` 也在各自子目录用同样的 CMake 命令构建；
-其中 `threadpool` 需要 Linux + pthread，`mempool` 在 Windows/Linux 均可构建。
+`component/` 下的 `threadpool`、`mempool`、`mysqlconnection` 也在各自子目录用
+同样的 CMake 命令构建；其中 `threadpool` 和 `mysqlconnection` 需要 Linux + pthread，
+`mysqlconnection` 还需要 libmysqlclient / libmariadb 开发包和可访问的 MySQL 服务端，
+`mempool` 在 Windows/Linux 均可构建。`mysqlconnection` 当前构建产物是静态库
+`libmysqlpool.a`，没有独立的 demo 可执行文件。
 
 `project/kvstore` 的核心不依赖网络，但存储层含 C++17 编译单元，不单独建顶层
 CMake 项目，而是作为 `netio/tcp_p2p` 的可选目标构建。存储后端由
@@ -345,6 +354,7 @@ gcc -O2 -Wall -Wextra -pthread \
 | `coroutine/NtyCo-master` | ✅ | ❌（`ucontext` + `epoll` + `dlsym`，仅 Linux） |
 | `component/threadpool` | ✅ | ❌（POSIX pthread） |
 | `component/mempool` | ✅ | ✅（C11，无 pthread） |
+| `component/mysqlconnection` | ✅（需 libmysqlclient / libmariadb + MySQL 服务端） | ❌（未验证） |
 | `DPDK/Ustack` | ✅（仅 VMware Ubuntu 虚拟机） | ❌（需要 vfio、大页和 Linux DPDK 环境） |
 
 ### 常见命令
@@ -391,14 +401,16 @@ ip neigh show 10.10.10.100
 |----|------|
 | 系统 | Linux（`multi_io` 额外支持 Windows + MSVC；`coroutine` 依赖 glibc 的 `ucontext` 与 `epoll`；`netio/io_uring` 需要内核 ≥ 5.6） |
 | 编译器 | GCC / Clang，C++17 与 C11 |
-| 构建 | CMake ≥ 3.13（`tcp_p2p` 要求 ≥ 3.10）；`NtyCo-master` 与 `DPDK/Ustack` 使用 Make；`netio/io_uring` 使用 gcc + 仓库内 liburing；`test/` 使用 gcc + pthread |
-| 依赖 | 主线项目无第三方库。`udp_kcp` 自带的 `ikcp.c/h` 是 vendored 源码，不通过包管理器获取；`netio/io_uring` 的 `liburing-master`（v2.15）是随仓库提供的源码；`NtyCo-master` 的 WebSocket / MySQL / Redis 示例额外依赖 OpenSSL、libmysqlclient、hiredis；`test/` 只依赖 glibc 的 pthread/poll |
+| 构建 | CMake ≥ 3.13（`tcp_p2p` 要求 ≥ 3.10，`component/mysqlconnection` 要求 ≥ 3.16）；`NtyCo-master` 与 `DPDK/Ustack` 使用 Make；`netio/io_uring` 使用 gcc + 仓库内 liburing；`test/` 使用 gcc + pthread |
+| 依赖 | 主线项目无第三方库。`udp_kcp` 自带的 `ikcp.c/h` 是 vendored 源码，不通过包管理器获取；`netio/io_uring` 的 `liburing-master`（v2.15）是随仓库提供的源码；`NtyCo-master` 的 WebSocket / MySQL / Redis 示例额外依赖 OpenSSL、libmysqlclient、hiredis；`test/` 只依赖 glibc 的 pthread/poll；`component/mysqlconnection` 额外依赖 libmysqlclient 或 libmariadb 开发包，以及可访问的 MySQL/MariaDB 服务端 |
 | io_uring | Linux 内核 ≥ 5.6；构建前在 `netio/io_uring/liburing-master` 执行 `./configure && make -C src` |
 | DPDK | DPDK 24.11.7（`pkg-config libdpdk`），VMware 虚拟机，`vmxnet3` 网卡，vfio-pci + no-IOMMU + 大页 |
 
 > **测试环境说明**：当前开发机是 **Windows**，没有安装 WSL，也没有本地 Linux 工具链。
 > 源码在本机编写；`coroutine`、`tcp_p2p`、`udp_kcp`、`netio/io_uring`、`test` 等依赖
-> Linux 系统调用的项目，统一在 **虚拟机中的 Linux** 上编译、运行和测试。
+> Linux 系统调用的项目，以及 `component/threadpool`、`component/mysqlconnection`，
+> 统一在 **虚拟机中的 Linux** 上编译、运行和测试；`mysqlconnection` 还需要在虚拟机中
+> 启动 MySQL/MariaDB 并准备测试库。
 > `netio/io_uring` 还要求虚拟机内核 ≥ 5.6 且未通过 seccomp 禁用 io_uring。
 > `test/` 的压测客户端同样在虚拟机中运行，并建议把服务端 stdout 重定向到
 > `/dev/null` 后再测 QPS。
@@ -415,8 +427,9 @@ ip neigh show 10.10.10.100
   `test/` 的可执行文件直接生成在 `test/` 目录下。
 - **平台相关代码**：用 `if(UNIX)` / `if(WIN32)` 在 CMake 里隔离，或在源码里用 `#ifdef` 包住。
 - **不引入外部依赖**：学习项目优先自己实现，能用标准库就不用第三方库。
-  例外是 `netio/io_uring/liburing-master`（随仓库提供的 liburing 源码）和
-  `udp_kcp` 自带的 `ikcp.c/h`。
+  例外是 `netio/io_uring/liburing-master`（随仓库提供的 liburing 源码）、
+  `udp_kcp` 自带的 `ikcp.c/h`，以及 `component/mysqlconnection` 使用的
+  libmysqlclient / libmariadb（连接池本身就是要学习客户端库的使用）。
 - **第三方源码**：`coroutine/NtyCo-master/` 是原样保留的参考实现，保留其 Makefile 和外部依赖，
   不纳入主线的 CMake 构建，也不按本仓库的代码风格改写。
 - **DPDK 实验**：`DPDK/Ustack/Makefile` 复制自 DPDK 官方示例

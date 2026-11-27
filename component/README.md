@@ -18,7 +18,8 @@
 ```text
 component/
 ├── threadpool/       [C11] 有界阻塞队列 + 固定工作线程池（Linux/pthread）
-└── mempool/          [C11] 固定大小块内存池 + 侵入式空闲链表（Windows/Linux）
+├── mempool/          [C11] 固定大小块内存池 + 侵入式空闲链表（Windows/Linux）
+└── mysqlconnection/  [C++17] 同步 / 异步 MySQL 连接池（Linux/libmysqlclient）
 ```
 
 ---
@@ -29,11 +30,13 @@ component/
 |------|------|------|------|------|
 | [`threadpool/`](threadpool/) | C11 | Linux | CMake | 队列与线程池分离的有界阻塞线程池：mutex + 条件变量、背压、优雅/立即关闭、pending 统计 |
 | [`mempool/`](mempool/) | C11 | Windows / Linux | CMake | 固定大小块内存池：侵入式空闲链表、chunk 批量申请、对齐、扩容上限、统计；基础版单线程 |
+| [`mysqlconnection/`](mysqlconnection/) | C++17 | Linux | CMake | 同步 + 异步 MySQL 连接池：RAII 借还、健康检查、空闲回收、有界任务队列、future/回调、统计；当前提供静态库 |
 
 详细设计、API、并发分析和测试方法见各自的 README：
 
 - [`threadpool/README.md`](threadpool/README.md)
 - [`mempool/README.md`](mempool/README.md)
+- [`mysqlconnection/README.md`](mysqlconnection/README.md)
 
 ---
 
@@ -62,8 +65,22 @@ cmake --build build -j
 预期：请求块大小 32、每 chunk 8 块、最多 2 个 chunk；演示容量从 8 扩容到 16，
 释放后按 LIFO 复用，达到上限后 `alloc` 返回 `NULL`，全部释放后统计归零。
 
+### mysqlconnection
+
+```bash
+cd mysqlconnection
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build -j
+```
+
+构建产物是静态库 `build/libmysqlpool.a`，需要本机可访问的 MySQL/MariaDB 服务端
+以及 `libmysqlclient` / `libmariadb` 开发包。当前子项目只提供核心库，最小同步/
+异步使用示例、数据库准备和手工验证步骤见
+[`mysqlconnection/README.md`](mysqlconnection/README.md)。
+
 > `mempool` 不依赖 pthread，Windows 下也可以用 CMake/Visual Studio 构建；
-> `threadpool` 依赖 POSIX pthread，建议在 Linux 虚拟机或 WSL 中运行。
+> `threadpool` 与 `mysqlconnection` 依赖 POSIX pthread，建议在 Linux 虚拟机或
+> WSL 中运行。
 
 ---
 
@@ -93,21 +110,45 @@ cmake --build build -j
 - **统计不变式**：`used + available == capacity`，容量与 chunk 数同步增长。
 - **基础版单线程**：线程安全版本作为后续扩展，不把锁和空闲链表耦合在一起。
 
+### mysqlconnection
+
+- **模块边界**：`MysqlConn` 只负责一条物理连接的建立、查询和重连；
+  `SyncConnectionPool` 只负责借还、等待、超时和空闲回收；
+  `AsyncConnectionPool` 只在同步池之上增加任务队列和工作线程，不重复实现
+  连接管理。
+- **同步池**：`mutex` + 条件变量 + 空闲 FIFO。池满时阻塞等待；需要扩容时先在
+  锁内预留名额，再在锁外执行 `mysql_real_connect()`，避免并发扩容超过
+  `max_size`。
+- **RAII 借还**：`ConnGuard` 析构自动归还，异常展开也不会漏还；借出前可选
+  `mysql_ping` 健康检查，失败时先关闭并按保存的配置重连，重连仍失败才销毁槽位。
+- **维护与关闭**：后台线程按 `idle_timeout` / `max_lifetime` 回收空闲连接并
+  补足 `min_size`；关闭时先停止借出，再等待在途连接归还，最后统一关闭物理连接。
+- **异步池**：libmysqlclient 的普通 C API 是阻塞的，异步池用固定 worker +
+  有界任务队列 + `std::future` 把阻塞 I/O 移出调用线程；队列满时快速失败，
+  形成背压。
+- **关闭语义**：异步池先拒绝新任务，再排空队列、join worker，最后关闭同步池。
+- **易错点**：重连会丢会话状态；`ConnGuard` 不能比池活得久；异步回调运行在
+  worker 上，不能长阻塞，也不能在回调里调用 `shutdown()`。
+
 ---
 
 ## 环境要求
 
 - **threadpool**：Linux（pthread）、CMake ≥ 3.16、GCC/Clang、C11。
 - **mempool**：Windows / Linux、CMake ≥ 3.16、支持 C11 的编译器；无外部依赖。
-- 当前开发机是 Windows，没有 WSL；依赖 pthread 的 threadpool 在 Linux 虚拟机中
-  编译和测试，mempool 可在 Windows 或 Linux 下构建。
+- **mysqlconnection**：Linux（pthread）、CMake ≥ 3.16、C++17、GCC/Clang，
+  `libmysqlclient` 或 `libmariadb` 开发包，以及可访问的 MySQL/MariaDB 服务端。
+- 当前开发机是 Windows，没有 WSL；threadpool 与 mysqlconnection 在 Linux 虚拟机
+  中编译和验证，mempool 可在 Windows 或 Linux 下构建。
 
 ---
 
 ## 后续方向
 
 - 对象池：在固定块内存池之上增加构造/析构回调。
-- 连接池：连接复用、健康检查、超时回收。
+- 连接池增强：prepared statement、流式结果、多结果集、事务守卫、
+  动态扩缩容、指标导出。
+- 非阻塞 MySQL 驱动 / 协程化异步池：用事件循环替代固定 worker 阻塞等待。
 - 动态线程池：按队列长度扩缩容，空闲线程超时退出。
 - 线程安全内存池：池级 mutex 或 per-thread cache，回答“多线程共享资源池”的问题。
 - 内存池 size class：多个固定块池组合，支持一组常用尺寸。
